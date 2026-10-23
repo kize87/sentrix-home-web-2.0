@@ -385,7 +385,8 @@ def test_visual_load_smaps_finishes_within_bounded_window(monkeypatch):
     assert normalized["model_process_host_memory_mib"] == 10
 
 
-def test_delayed_topology_is_refreshed_before_memory_walk_ages_it_out(monkeypatch):
+@pytest.mark.parametrize("explicit_pid", [False, True])
+def test_delayed_topology_is_refreshed_before_memory_walk_ages_it_out(monkeypatch, explicit_pid):
     import time
 
     from photobench.domain.runtime.metrics import memory_freshness
@@ -407,12 +408,13 @@ def test_delayed_topology_is_refreshed_before_memory_walk_ages_it_out(monkeypatc
     monkeypatch.setattr(jetson, "_nvmap_cache", {"at": float("-inf"), "table": None})
     monkeypatch.setattr(jetson, "_read_nvmap_clients", lambda: "llama 0 42 10240K\n")
     snapshot = {"started": time.monotonic() - 2.5, "value": [row]}
+    main = {"ports": [8100], **({"pids": [42]} if explicit_pid else {})}
     started = time.monotonic()
     data = jetson._augment_local_process_memory(
         {},
         model_pid=None,
         endpoint_port="8100",
-        telemetry_services={"main_model": {"ports": [8100]}},
+        telemetry_services={"main_model": main},
         probe=BoundedProbe(limit=4),
         topology_probe=BoundedProbe(limit=1),
         topology_snapshot=snapshot,
@@ -613,9 +615,9 @@ def test_port_inventory_optimization_preserves_non_port_service_selectors(monkey
 
 
 @pytest.mark.parametrize("changed_membership", [False, True])
-@pytest.mark.parametrize("topology_seconds", [1.1, 1.6])
+@pytest.mark.parametrize("topology_seconds,smaps_seconds", [(1.1, 0.3), (1.6, 0.3), (1.6, 1.4)])
 def test_topology_finishing_during_or_after_smaps_is_joined_with_identity_check(
-    monkeypatch, changed_membership, topology_seconds
+    monkeypatch, changed_membership, topology_seconds, smaps_seconds
 ):
     import time
 
@@ -634,7 +636,7 @@ def test_topology_finishing_during_or_after_smaps_is_joined_with_identity_check(
         return fresh
 
     def smaps(pid):
-        time.sleep(0.3)
+        time.sleep(smaps_seconds)
         return 8, 10
 
     monkeypatch.setattr(jetson, "_host_process_rows", topology)
@@ -656,7 +658,7 @@ def test_topology_finishing_during_or_after_smaps_is_joined_with_identity_check(
         topology_snapshot=snapshot,
     )
     finished = time.monotonic()
-    assert max(1.25, topology_seconds - 0.05) < finished - started < 2.5
+    assert topology_seconds - 0.05 < finished - started < topology_seconds + 0.35
     assert calls == [1] and probe.pending_work() == [], "harvesting must not start extra work"
     assert snapshot["started"] >= started
     normalized, _ = memory_freshness({**data, "_t": finished})
@@ -667,5 +669,63 @@ def test_topology_finishing_during_or_after_smaps_is_joined_with_identity_check(
     else:
         assert normalized["memory_complete"] is True
         assert data["memory_observations"]["topology"]["observed_at_monotonic"] == snapshot["started"]
-        assert data["memory_observations"]["process:42:pss"]["observed_at_monotonic"] >= started + 0.9
+        assert (
+            started <= data["memory_observations"]["process:42:pss"]["observed_at_monotonic"] < started + 0.5
+        )
         assert data["model_system_processes"][0]["rss_mib"] == 30
+
+
+def test_previous_topology_finishing_during_memory_launches_current_successor(monkeypatch):
+    import threading
+    import time
+
+    from photobench.domain.runtime.metrics import memory_freshness
+    from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
+
+    row = {"pid": 42, "ppid": 1, "start_ticks": "42", "rss_mib": 20, "listening_ports": [8100]}
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def topology(ports):
+        calls.append(1)
+        if len(calls) == 1:
+            entered.set()
+            release.wait(10)
+        return [{**row, "rss_mib": 30}]
+
+    def smaps(pid):
+        # The old discovery cannot finish until memory starts: serial waiting
+        # would consume the initial deadline before reaching this signal.
+        release.set()
+        time.sleep(0.2)
+        return 8, 10
+
+    monkeypatch.setattr(jetson, "_host_process_rows", topology)
+    monkeypatch.setattr(jetson, "_process_start_ticks", lambda pid: str(pid))
+    monkeypatch.setattr(jetson, "_process_smaps_memory_mib", smaps)
+    monkeypatch.setattr(jetson, "_nvmap_cache", {"at": float("-inf"), "table": None})
+    monkeypatch.setattr(jetson, "_read_nvmap_clients", lambda: "llama 0 42 10240K\n")
+    probe = BoundedProbe(limit=1)
+    probe.collect({"topology": lambda: topology({"8100"})}, budget=0)
+    assert entered.wait(1)
+    original = time.monotonic() - 1.8
+    snapshot = {"started": original, "finished": original + 0.1, "value": [row]}
+    started = time.monotonic()
+    try:
+        data = jetson._augment_local_process_memory(
+            {},
+            model_pid=None,
+            endpoint_port="8100",
+            telemetry_services={"main_model": {"ports": [8100]}},
+            probe=BoundedProbe(limit=4),
+            topology_probe=probe,
+            topology_snapshot=snapshot,
+        )
+        assert time.monotonic() - started < 0.8
+        assert calls == [1, 1] and probe.pending_work() == []
+        assert snapshot["started"] >= started
+        normalized, _ = memory_freshness({**data, "_t": time.monotonic()})
+        assert normalized["memory_complete"] is True
+        assert data["memory_observations"]["process:42:pss"]["observed_at_monotonic"] < snapshot["started"]
+    finally:
+        release.set()

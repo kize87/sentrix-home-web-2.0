@@ -405,13 +405,24 @@ def _process_parent_snapshot() -> dict[int, int]:
     return {int(pid): int(parent) for pid, parent in (line.split() for line in completed.stdout.splitlines())}
 
 
+class _ProcessRows(list[dict[str, Any]]):
+    def __init__(self, rows: list[dict[str, Any]], discovery: dict[str, Any]) -> None:
+        super().__init__(rows)
+        self.discovery = discovery
+
+
 def _host_process_rows(target_ports: set[str] | None = None) -> list[dict[str, Any]]:
+    started = time.monotonic()
+    discovery: dict[str, Any] = {"path": "full_proc"}
     identities: dict[int, tuple[str, int]] | None = None
     ports_by_pid: dict[int, set[str]] = {}
     if target_ports:
         try:
             parents = _process_parent_snapshot()
+            discovery.update(path="native_pid_parent", parent_seconds=time.monotonic() - started)
+            listener_started = time.monotonic()
             ports_by_pid = _listening_ports_by_pid(target_ports)
+            discovery["listener_seconds"] = time.monotonic() - listener_started
             selected = set(ports_by_pid)
             while True:
                 expanded = selected | {pid for pid, parent in parents.items() if parent in selected}
@@ -429,9 +440,15 @@ def _host_process_rows(target_ports: set[str] | None = None) -> list[dict[str, A
             # A reused listener PID cannot inherit old port ownership.
             if ports_by_pid != _listening_ports_by_pid(target_ports):
                 identities = None
-        except (OSError, ValueError, subprocess.SubprocessError):
+                discovery.update(path="full_proc_fallback", reason="listener_changed")
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
             # Failed native discovery falls back to the complete proc snapshot.
             identities = None
+            discovery.update(
+                path="full_proc_fallback",
+                reason=type(error).__name__,
+                parent_seconds=time.monotonic() - started,
+            )
     if identities is None:
         identities = {}
         for proc in Path("/proc").iterdir():
@@ -467,7 +484,8 @@ def _host_process_rows(target_ports: set[str] | None = None) -> list[dict[str, A
                 "identity": cmdline.lower()[:1000],
             }
         )
-    return rows
+    discovery["total_seconds"] = time.monotonic() - started
+    return _ProcessRows(rows, discovery)
 
 
 def _is_system_related_process(row: dict[str, Any]) -> bool:
@@ -561,7 +579,10 @@ def _augment_local_process_memory(
         if topology_probe is None:
             rows = _host_process_rows(ports)
         else:
-            topology_deadline = started + 1.0
+            # Once a tree is known, start/harvest discovery without blocking
+            # current memory reads. Waiting a second here serialized the two
+            # walks and left too little of the total window for a fresh tree.
+            topology_deadline = started + (0.0 if port_scoped and topology_snapshot else 1.0)
             discovery = {"topology": lambda: _host_process_rows(ports)}
             ready_topology = topology_probe.collect(
                 discovery, budget=max(0.0, topology_deadline - time.monotonic())
@@ -585,7 +606,10 @@ def _augment_local_process_memory(
     except Exception:
         rows = []
     topology_observation = _observation(
-        "proc_listener_topology", float(topology_result.get("started", started)), available=bool(rows)
+        "proc_listener_topology",
+        float(topology_result.get("started", started)),
+        available=bool(rows),
+        discovery=getattr(rows, "discovery", {}),
     )
     if topology_result:
         topology_observation["finished_at_monotonic"] = topology_result.get("finished")
@@ -653,6 +677,16 @@ def _augment_local_process_memory(
             budget=max(0.0, 2.5 - (time.monotonic() - started)),
             launch=False,
         ).get("topology")
+        if latest is not None and float(latest["started"]) < started:
+            # A previous callback's job can finish while memory is read. Its
+            # successor was not launchable at entry; start it now within the
+            # SAME deadline, retaining the older observation if still pending.
+            current = topology_probe.collect(
+                {"topology": lambda: _host_process_rows(target_ports)},
+                budget=max(0.0, 2.5 - (time.monotonic() - started)),
+            ).get("topology")
+            if current is not None:
+                latest = current
         if latest is not None:
             if topology_snapshot is not None:
                 topology_snapshot.clear()
@@ -664,7 +698,12 @@ def _augment_local_process_memory(
             if previous_members == current_members and latest_rows:
                 topology_observation.clear()
                 topology_observation.update(
-                    _observation("proc_listener_topology", float(latest["started"]), available=True)
+                    _observation(
+                        "proc_listener_topology",
+                        float(latest["started"]),
+                        available=True,
+                        discovery=getattr(latest_rows, "discovery", {}),
+                    )
                 )
                 topology_observation["finished_at_monotonic"] = latest.get("finished")
                 # VmRSS belongs to that new topology read. PSS/smaps RSS keep
