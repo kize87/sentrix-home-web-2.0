@@ -610,3 +610,59 @@ def test_port_inventory_optimization_preserves_non_port_service_selectors(monkey
     else:
         assert selections[0] is not None
         assert sampled == [1], "explicit port scope must not match unrelated same-name services"
+
+
+@pytest.mark.parametrize("changed_membership", [False, True])
+def test_topology_finishing_during_smaps_is_harvested_with_identity_check(monkeypatch, changed_membership):
+    import time
+
+    from photobench.domain.runtime.metrics import memory_freshness
+    from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
+
+    row = {"pid": 42, "ppid": 1, "start_ticks": "42", "rss_mib": 20, "listening_ports": [8100]}
+    calls = []
+
+    def topology(ports):
+        calls.append(1)
+        time.sleep(1.1)
+        fresh = [{**row, "rss_mib": 30}]
+        if changed_membership:
+            fresh.append({"pid": 43, "ppid": 42, "start_ticks": "43", "rss_mib": 5})
+        return fresh
+
+    def smaps(pid):
+        time.sleep(0.3)
+        return 8, 10
+
+    monkeypatch.setattr(jetson, "_host_process_rows", topology)
+    monkeypatch.setattr(jetson, "_process_start_ticks", lambda pid: str(pid))
+    monkeypatch.setattr(jetson, "_process_smaps_memory_mib", smaps)
+    monkeypatch.setattr(jetson, "_nvmap_cache", {"at": float("-inf"), "table": None})
+    monkeypatch.setattr(jetson, "_read_nvmap_clients", lambda: "llama 0 42 10240K\n")
+    original = time.monotonic() - 1.8
+    snapshot = {"started": original, "finished": original + 0.1, "value": [row]}
+    probe = BoundedProbe(limit=1)
+    started = time.monotonic()
+    data = jetson._augment_local_process_memory(
+        {},
+        model_pid=None,
+        endpoint_port="8100",
+        telemetry_services={"main_model": {"ports": [8100]}},
+        probe=BoundedProbe(limit=4),
+        topology_probe=probe,
+        topology_snapshot=snapshot,
+    )
+    finished = time.monotonic()
+    assert 1.25 < finished - started < 1.8
+    assert calls == [1] and probe.pending_work() == [], "harvesting must not start extra work"
+    assert snapshot["started"] >= started
+    normalized, _ = memory_freshness({**data, "_t": finished})
+    if changed_membership:
+        assert normalized["memory_complete"] is False
+        assert data["memory_observations"]["topology"]["reason"] == "topology_changed_during_memory_read"
+        assert len(snapshot["value"]) == 2
+    else:
+        assert normalized["memory_complete"] is True
+        assert data["memory_observations"]["topology"]["observed_at_monotonic"] == snapshot["started"]
+        assert data["memory_observations"]["process:42:pss"]["observed_at_monotonic"] >= started + 0.9
+        assert data["model_system_processes"][0]["rss_mib"] == 30

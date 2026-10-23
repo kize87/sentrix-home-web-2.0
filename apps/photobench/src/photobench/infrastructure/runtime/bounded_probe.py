@@ -16,7 +16,7 @@ class BoundedProbe:
         self._jobs: dict[str, tuple[threading.Thread, threading.Event, dict[str, Any]]] = {}
 
     def collect(
-        self, readers: Mapping[str, Callable[[], Any]], *, budget: float
+        self, readers: Mapping[str, Callable[[], Any]], *, budget: float, launch: bool = True
     ) -> dict[str, dict[str, Any]]:
         deadline = time.monotonic() + max(0.0, budget)
         ready: dict[str, dict[str, Any]] = {}
@@ -28,7 +28,7 @@ class BoundedProbe:
                         del self._jobs[key]
                         if key in readers:
                             ready[key] = dict(result)
-                keys = [key for key in readers if key not in ready and key not in launched]
+                keys = [key for key in readers if launch and key not in ready and key not in launched]
                 offset = self._cursor % len(keys) if keys else 0
                 for index, key in enumerate(keys[offset:] + keys[:offset]):
                     if key in self._jobs or len(self._jobs) >= self.limit:

@@ -642,6 +642,37 @@ def _augment_local_process_memory(
         # still below the unchanged 3s source TTL/coverage requirement. Do not
         # substitute a prior memory value when a read exceeds this deadline.
         ready = probe.collect(readers, budget=max(0.0, 2.5 - (time.monotonic() - started)))
+    if topology_probe is not None and probe is not None and port_scoped:
+        # Discovery that exceeded its initial 1s wait may finish DURING smaps.
+        # Harvest it without starting more work or extending the total budget.
+        latest = topology_probe.collect(
+            {"topology": lambda: _host_process_rows(target_ports)}, budget=0.0, launch=False
+        ).get("topology")
+        if latest is not None:
+            if topology_snapshot is not None:
+                topology_snapshot.clear()
+                topology_snapshot.update(latest)
+            latest_rows = latest.get("value") or []
+            fields = ("ppid", "start_ticks", "listening_ports", "identity")
+            previous_members = {row["pid"]: tuple(row.get(key) for key in fields) for row in rows}
+            current_members = {row["pid"]: tuple(row.get(key) for key in fields) for row in latest_rows}
+            if previous_members == current_members and latest_rows:
+                topology_observation.clear()
+                topology_observation.update(
+                    _observation("proc_listener_topology", float(latest["started"]), available=True)
+                )
+                topology_observation["finished_at_monotonic"] = latest.get("finished")
+                # VmRSS belongs to that new topology read. PSS/smaps RSS keep
+                # their own original probe times; no old value is relabelled.
+                current_rss = {row["pid"]: row.get("rss_mib") for row in latest_rows}
+                for row in model_rows + sentrix_rows + product_rows + auxiliary_rows + selected_rows:
+                    row["rss_mib"] = current_rss[row["pid"]]
+            else:
+                # A new worker / reused PID cannot inherit the old membership's
+                # memory totals. The next callback observes the new tree.
+                topology_observation.update(
+                    status="unavailable", reason="topology_changed_during_memory_read"
+                )
     for row in selected_rows:
         pid = int(row["pid"])
         observed = time.monotonic()
