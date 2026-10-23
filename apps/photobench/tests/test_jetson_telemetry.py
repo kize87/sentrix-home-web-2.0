@@ -272,6 +272,40 @@ def test_listener_cache_revalidates_socket_and_process_identity(monkeypatch, tmp
     assert jetson._listening_ports_by_pid({"8100"}) == {3: {"8100"}}
 
 
+def test_listener_cache_checks_exact_fds_and_rediscovers_reused_descriptors(monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    (proc / "net").mkdir(parents=True)
+    (proc / "net/tcp").write_text("header\n0: 0100007F:1FA4 0:0 0A 0 0 0 0 0 100\n")
+    (proc / "net/tcp6").write_text("header\n")
+    for pid in (1, 2):
+        (proc / str(pid) / "fd").mkdir(parents=True)
+        for fd in range(30):
+            (proc / str(pid) / "fd" / str(fd)).symlink_to(f"socket:[{pid * 1000 + fd}]")
+    listener = proc / "1/fd/31"
+    listener.symlink_to("socket:[100]")
+    monkeypatch.setattr(
+        jetson, "Path", lambda name: proc / str(name).removeprefix("/proc/") if str(name) != "/proc" else proc
+    )
+    monkeypatch.setattr(jetson, "_process_start_ticks", lambda pid: str(pid))
+    monkeypatch.setattr(jetson, "_listener_cache", {})
+    reads = []
+    original = jetson.os.readlink
+
+    def readlink(path):
+        reads.append(str(path))
+        return original(path)
+
+    monkeypatch.setattr(jetson.os, "readlink", readlink)
+    assert jetson._listening_ports_by_pid({"8100"}) == {1: {"8100"}}
+    reads.clear()
+    assert jetson._listening_ports_by_pid({"8100"}) == {1: {"8100"}}
+    assert reads == [str(listener)], "unrelated open fds must not be traversed on a verified cache hit"
+    listener.unlink()
+    listener.symlink_to("socket:[999]")
+    (proc / "2/fd/31").symlink_to("socket:[100]")
+    assert jetson._listening_ports_by_pid({"8100"}) == {2: {"8100"}}
+
+
 def test_pid_identity_change_invalidates_collected_memory(monkeypatch):
     from photobench.domain.runtime.metrics import memory_freshness
 

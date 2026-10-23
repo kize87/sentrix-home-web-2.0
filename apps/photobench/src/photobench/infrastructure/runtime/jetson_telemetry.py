@@ -293,8 +293,14 @@ def _process_start_ticks(pid: int) -> str | None:
         return None
 
 
+class _SocketInodes(set[str]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.descriptors: dict[str, str] = {}
+
+
 def _socket_inodes(pid: int) -> set[str]:
-    inodes: set[str] = set()
+    inodes = _SocketInodes()
     try:
         fds = list(Path(f"/proc/{pid}/fd").iterdir())
     except OSError:
@@ -307,7 +313,20 @@ def _socket_inodes(pid: int) -> set[str]:
         match = re.fullmatch(r"socket:\[(\d+)\]", target)
         if match:
             inodes.add(match.group(1))
+            inodes.descriptors[match.group(1)] = fd.name
     return inodes
+
+
+def _owns_listener_sockets(pid: int, held: set[str], descriptors: dict[str, str]) -> bool:
+    if set(descriptors) != held:
+        return held <= _socket_inodes(pid)
+    try:
+        return all(
+            os.readlink(Path(f"/proc/{pid}/fd") / fd) == f"socket:[{inode}]"
+            for inode, fd in descriptors.items()
+        )
+    except OSError:
+        return False
 
 
 def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, set[str]]:
@@ -345,6 +364,7 @@ def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, s
         entry = _listener_cache.get(selection, {})
         cached = entry.get("owners", {})
         identities = entry.get("identities", {})
+        descriptors = entry.get("descriptors", {})
         if (
             target_ports
             and entry.get("signature") == signature
@@ -352,21 +372,26 @@ def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, s
             and all(
                 identities.get(pid) is not None
                 and _process_start_ticks(pid) == identities[pid]
-                and held <= _socket_inodes(pid)
+                and _owns_listener_sockets(pid, held, descriptors.get(pid, {}))
                 for pid, held in cached.items()
             )
         ):
             entry["expires"] = time.monotonic() + 2.0  # idle retention, not observation freshness
             return {pid: {socket_ports[inode] for inode in held} for pid, held in cached.items()}
     owners: dict[int, set[str]] = {}
+    listener_descriptors: dict[int, dict[str, str]] = {}
     result: dict[int, set[str]] = {}
     for proc in Path("/proc").iterdir():
         if not proc.name.isdecimal():
             continue
         before = _process_start_ticks(int(proc.name))
-        held = _socket_inodes(int(proc.name)) & socket_ports.keys()
+        sockets = _socket_inodes(int(proc.name))
+        held = sockets & socket_ports.keys()
         if held and before is not None and before == _process_start_ticks(int(proc.name)):
             owners[int(proc.name)] = held
+            listener_descriptors[int(proc.name)] = {
+                inode: fd for inode, fd in getattr(sockets, "descriptors", {}).items() if inode in held
+            }
             result[int(proc.name)] = {socket_ports[inode] for inode in held}
     with _listener_lock:
         now = time.monotonic()
@@ -381,6 +406,7 @@ def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, s
             "signature": signature,
             "owners": owners,
             "identities": {pid: _process_start_ticks(pid) for pid in owners},
+            "descriptors": listener_descriptors,
             "expires": now + 2.0,
         }
     return result
