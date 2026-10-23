@@ -91,11 +91,18 @@ class PhaseMetricsProjection(BaseModel):
     scanned_count: int | None = None
 
 
+class WorkStatusResponse(BaseModel):
+    work: list[dict[str, Any]]
+    cleanup_status: str
+    errors: dict[str, str] | None = None
+
+
 class RunMetricsResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     read_revision: str | None = None
     history_mode: str | None = None
     persistence: dict[str, Any] | None = None
+    cleanup: dict[str, Any] | None = None
     metrics_contract_version: int | None = None
     build_revision: str | None = None
     runtime_snapshot: dict[str, Any] | None = None

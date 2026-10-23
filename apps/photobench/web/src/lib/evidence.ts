@@ -25,7 +25,7 @@
  */
 import { albumLocalUrl, decorateMedia, inferMediaType, mediaKey, mediaRefs } from "../api/media.ts";
 import type { MediaLike } from "../api/media.ts";
-import { fmtPct } from "./format.ts";
+import { finiteMetric, fmtPct } from "./format.ts";
 import type { ConversationTurn } from "../api/types.ts";
 
 type Dict = Record<string, unknown>;
@@ -63,7 +63,11 @@ export function itemParseRate(item: MediaLike | null | undefined): string {
 
 /** 1.0 `:611-613`。 */
 export function conversationTurns(item: MediaLike | null | undefined): ConversationTurn[] {
-  return Array.isArray(item?.conversation) ? (item?.conversation as ConversationTurn[]) : [];
+  const declared = Array.isArray(item?.conversation) ? (item.conversation as ConversationTurn[]) : [];
+  const runtime = Array.isArray(item?.runtime_turns) ? (item.runtime_turns as ConversationTurn[]) : [];
+  return Array.from({ length: Math.max(declared.length, runtime.length) }, (_, index) => ({
+    ...(declared[index] || {}), ...(runtime[index] || {}),
+  }));
 }
 
 /** 1.0 `:614-616`。优先 item 的 `conversation_id`，再找轮次里的，最后给历史文案。 */
@@ -78,7 +82,7 @@ export function conversationIdLabel(item: MediaLike | null | undefined): string 
 /** 1.0 `:617-620`。取不到 `context_turn_count` 时**用下标**当轮数。 */
 export function conversationContextLabel(turn: MediaLike | null | undefined, index: number): string {
   const raw = dict(turn).context_turn_count;
-  const count = Number.isFinite(Number(raw)) ? Number(raw) : index;
+  const count = finiteMetric(raw) ?? index;
   return count > 0 ? `本轮携带前 ${count} 轮对话上下文` : "首轮，无历史上下文";
 }
 

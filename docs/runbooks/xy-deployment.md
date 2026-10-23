@@ -214,3 +214,8 @@ NX c3dbd09实测拓扑最慢2.295秒，核心内存有效缺口6.078秒，未通
 ### Judge进度显示排查
 
 对比`phases.qa_eval.progress.judge_completed`与兼容外层`judge_completed`，新版两者相同，且与同一items检查点提交。Judge已结束包含评分失败，跳过另列；有效评分另看`summary.judge_valid_count`，合法0分计入。前端缺少内层时读取历史外层，均无值显示?；不根据均分猜进度。旧执行体等所有Agent结束才回收Judge的行为不能靠刷新页面纠正，新协调器须随固定后端版本发布后生效；不得为修显示中断共享设备或改写旧run。本轮只本地验证，未发布。
+
+
+## 2026-10-23 本轮更新规则
+
+详细契约及测试边界见[取消、调用事实与采样优化](../refactor/2026-10-23-cancellation-trace-deviations.md)。domain端口、application编排、infrastructure探测及bootstrap装配分层不变；产品同步导入配合协作取消，不引入持久队列。停止全部只请求测评相关任务停止，pending与worker真正退出分开。原始历史、null、TTL和3秒覆盖门槛保持；新运行的L2调用事实纳入真实模型调用统计，旧记录不补造。四机更新前重新核验占用，只激活授权8291/8872。受影响设备真实回归须使用新SHA，不能复用旧run标成新版。

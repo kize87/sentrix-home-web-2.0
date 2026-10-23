@@ -20,6 +20,7 @@ S9a 施工记录把它裁决给 S9b；S9b 切三段时漏分，S9b-2 施工记�
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -39,6 +40,7 @@ from photobench.domain.runtime.metrics import (
     memory_freshness,
     system_used,
 )
+from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
 from photobench.infrastructure.runtime.telemetry_scope import (
     dedupe_rows,
     load_telemetry_services,
@@ -470,6 +472,7 @@ def _augment_local_process_memory(
     model_pid: int | None,
     endpoint_port: str,
     telemetry_services: Mapping[str, Any] | None = None,
+    probe: BoundedProbe | None = None,
 ) -> dict[str, Any]:
     """Fresh related-PID PSS plus main/auxiliary nvmap allocation estimates."""
     # Never let a disappeared PID or failed smaps read inherit a previous total.
@@ -548,13 +551,33 @@ def _augment_local_process_memory(
         auxiliary_rows = []
     observations: dict[int, tuple[float | None, float | None]] = {}
     memory_observations: dict[str, Any] = {"topology": topology_observation}
-    for row in dedupe_rows(model_rows + sentrix_rows):
+    selected_rows = dedupe_rows(model_rows + sentrix_rows)
+    ready: dict[str, dict[str, Any]] = {}
+    if probe is not None:
+        readers = {
+            f"{row['pid']}:{row.get('start_ticks')}": (
+                lambda pid=int(row["pid"]): (
+                    _process_start_ticks(pid),
+                    _process_smaps_memory_mib(pid),
+                    _process_start_ticks(pid),
+                )
+            )
+            for row in selected_rows
+        }
+        ready = probe.collect(readers, budget=max(0.0, 0.6 - (time.monotonic() - started)))
+    for row in selected_rows:
         pid = int(row["pid"])
-        before = _process_start_ticks(pid)
         observed = time.monotonic()
         over_budget = observed - started >= 1.0
-        pss, rss = (None, None) if over_budget else _process_smaps_memory_mib(pid)
-        after = _process_start_ticks(pid)
+        if probe is None:
+            before = _process_start_ticks(pid)
+            pss, rss = (None, None) if over_budget else _process_smaps_memory_mib(pid)
+            after = _process_start_ticks(pid)
+        else:
+            result = ready.get(f"{pid}:{row.get('start_ticks')}", {})
+            over_budget = not result or "value" not in result
+            observed = float(result.get("started", observed))
+            before, (pss, rss), after = result.get("value", (None, (None, None), None))
         same_process = before is not None and before == after and row.get("start_ticks") == before
         observations[pid] = (pss, rss) if same_process else (None, None)
         for basis, value in (("pss", pss), ("rss", rss), ("identity", before)):
@@ -743,6 +766,8 @@ def _augment_local_process_memory(
         memory_observation_version=1,
         memory_observations=memory_observations,
         memory_dependencies=dependencies,
+        process_probe_seconds=time.monotonic() - started,
+        process_probe_pending=probe.pending_work() if probe is not None else [],
         pss_sampled_at_monotonic=started,
     )
     return data
@@ -922,6 +947,9 @@ class LocalJetsonLlamaCppTelemetryProvider:
         telemetry_services: Mapping[str, Any] | None = None,
     ):
         self.telemetry_services = telemetry_services
+        self._memory_probe = BoundedProbe(limit=4)
+        self._optional_probe = BoundedProbe(limit=1)
+        self._kv_observation: dict[str, Any] = {}
         parsed = urlparse(endpoint_url)
         if parsed.scheme not in {"http", "https"} or not parsed.port:
             raise ValueError("a local llama.cpp endpoint with an explicit port is required")
@@ -1053,36 +1081,14 @@ class LocalJetsonLlamaCppTelemetryProvider:
         return self._device_sample
 
     def gpu_stats(self) -> dict[str, Any]:
-        # A failed optional probe is unknown, never the preceding observation.
-        data: dict[str, Any] = self._metrics()
-        data["memory_unit"] = "process_pss_uma_mib"
-        data["memory_scope"] = "model_process_pss"
-        data["memory_profile"] = {"method": "orin_process_pss_uma_v1"}
-        try:
-            pid = self._pid()
-            if pid != self._last_pid:
-                # PID 变了意味着换过一次模型进程：上一次的进程内存读数不再属于它。
-                self._last_pid = pid
-                data.pop("process_memory_used_mib", None)
-            data["root_pid"] = pid
-            if pid != getattr(self, "_baseline_pid", None):
-                self._baseline_pid = pid
-                self._system_baseline_mib = None
-            # process_memory() owns the single fresh PSS/RSS observation for
-            # every related PID. Walking the large main model here as well
-            # delays all core memory samples without contributing a value.
-            data["llama_server_args"] = self._llama_args(pid)
-            device = self._device()
-            used = device.get("system_memory_used_mib")
-            if self._system_baseline_mib is None and isinstance(used, (int, float)):
-                self._system_baseline_mib = float(used)
-            if self._system_baseline_mib is not None and isinstance(used, (int, float)):
-                data["system_memory_baseline_mib"] = round(self._system_baseline_mib, 2)
-                data["system_memory_delta_mib"] = round(float(used) - self._system_baseline_mib, 2)
-        except (OSError, ValueError, IndexError) as exc:
-            # 探不到就撤掉进程内存指标并写明原因——留旧值会被读成当前值。
-            data.pop("process_memory_used_mib", None)
-            data["pss_error"] = str(exc)
+        # Optional HTTP is isolated from the core sampler; at most one request in flight.
+        ready = self._optional_probe.collect({"kv": self._metrics}, budget=0.0)
+        if "kv" in ready:
+            self._kv_observation = ready["kv"]
+        observation = self._kv_observation
+        fresh = time.monotonic() - float(observation.get("started", float("-inf"))) <= 3 * self.pss_interval
+        data: dict[str, Any] = dict(observation.get("value") or {}) if fresh else {}
+        data["kv_observed_at_monotonic"] = observation.get("started")
         self._last_memory = {"status": "available", "source": "jetson_local_pss", "data": data}
         return {
             "status": "available",
@@ -1095,16 +1101,37 @@ class LocalJetsonLlamaCppTelemetryProvider:
                         "memory_scope": "model_process_pss",
                         **self._device(),
                     }
-                ],
+                ]
             },
         }
+
+    def pending_work(self) -> list[str]:
+        return [*self._memory_probe.pending_work(), *self._optional_probe.pending_work()]
 
     def process_memory(self) -> dict[str, Any]:
         try:
             data: dict[str, Any] = self._last_memory.get("data") or {}
             augmented = _augment_local_process_memory(
-                data, model_pid=None, endpoint_port=str(self.port), telemetry_services=self.telemetry_services
+                data,
+                model_pid=None,
+                endpoint_port=str(self.port),
+                telemetry_services=self.telemetry_services,
+                probe=self._memory_probe,
             )
+            pid = augmented.get("root_pid")
+            identity = (pid, _process_start_ticks(pid)) if isinstance(pid, int) else None
+            if identity != getattr(self, "_baseline_identity", None):
+                self._baseline_identity = identity
+                self._system_baseline_mib = None
+            used = self._device_sample.get("system_memory_used_mib")
+            if self._system_baseline_mib is None and isinstance(used, (int, float)):
+                self._system_baseline_mib = float(used)
+            if self._system_baseline_mib is not None and isinstance(used, (int, float)):
+                augmented["system_memory_baseline_mib"] = self._system_baseline_mib
+                augmented["system_memory_delta_mib"] = round(float(used) - self._system_baseline_mib, 2)
+            if isinstance(pid, int):
+                with contextlib.suppress(OSError, ValueError, IndexError):
+                    augmented["llama_server_args"] = self._llama_args(pid)
             augmented, _ = memory_freshness({**augmented, "_t": time.monotonic()})
             augmented.pop("_t", None)
             augmented["process_memory_used_mib"] = augmented.get(
@@ -1135,6 +1162,9 @@ class LocalJetsonLlamaCppTelemetryProvider:
 
     def kv_cache(self) -> dict[str, Any]:
         data: dict[str, Any] = self._last_memory.get("data") or {}
+        observed = data.get("kv_observed_at_monotonic")
+        if observed is None or time.monotonic() - float(observed) > 3 * self.pss_interval:
+            return {"status": "unavailable", "source": "llamacpp_metrics", "reason": "kv_metrics_stale"}
         if "kv_cache_used_tokens" not in data and "vllm_metrics" not in data:
             return {"status": "unavailable", "source": "llamacpp_metrics", "reason": "kv_metrics_not_exposed"}
         return {

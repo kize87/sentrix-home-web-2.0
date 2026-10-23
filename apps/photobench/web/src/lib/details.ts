@@ -140,8 +140,8 @@ export function guardSummary(item: unknown): GuardSummary {
   const det = dict(guard.deterministic_delivery);
   const delivery = dict(dict(item).delivery_status);
   return {
-    recorded: Boolean(Object.keys(guard).length || dict(item).termination_reason || dict(item).agent_status),
-    status: (guard.status as string) || (dict(item).agent_status as string) || "-",
+    recorded: Boolean(Object.keys(guard).length || dict(item).termination_reason || (dict(item).agent_status || dict(item).turn_status)),
+    status: (guard.status as string) || (dict(item).agent_status as string) || (dict(item).turn_status as string) || "-",
     termination: normalizedTerminationReason(item),
     recoveries: guard.recovery_attempts ?? "-",
     codes: codes.length ? codes.join("、") : "无",

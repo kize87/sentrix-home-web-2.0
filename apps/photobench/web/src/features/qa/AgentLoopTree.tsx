@@ -199,7 +199,7 @@ function CallNode({ detail, group, call, callIndex, modelLabel }: CallNodeProps)
         </span>
         <span>TTFT {fmtMs(call.ttft_ms)}</span>
         <span>Agent Loop 总时延 {fmtMs(timing.totalMs)}</span>
-        <span>模型 {fmtMs(call.total_ms)}</span>
+        <span>请求墙钟 {fmtMs(timing.modelMs)}</span>
         <span>
           Token {esc(call.preflight_prompt_tokens ?? call.prompt_tokens ?? "-")} /{" "}
           {esc(call.completion_tokens ?? "-")}

@@ -222,6 +222,7 @@ make lint format-check typecheck arch photobench-check check-docs coverage
 
 | 端口 | 定义 | 方法摘要 | 当前实现 |
 |---|---|---|---|
+| `OperationControl` | `domain/media/ports.py` | `start/request_cancel/check/finish`，有界登记与真实退出确认 | `InProcessOperationControl` |
 | `AssetRepository` | `domain/media/ports.py:71` | `add/get/list_by_scope/find_by_hash/update_status` | `SqliteAssetRepository` |
 | `ObservationRepository` | `:89` | `add/get/list_by_asset/list_scope/enrich/latest_ocr_text/latest_people_snapshot` | `SqliteObservationRepository` |
 | `VlmObserver` | `:184` | `model_id`、`observe(path) -> ObservationSemantics \| None` | `OpenAIVlmObserver` |
@@ -324,6 +325,8 @@ make lint format-check typecheck arch photobench-check check-docs coverage
 |---|---|---|
 | `AlbumSource` | `domain/datasets/ports.py:33` | `manifest/qa_rows/read_file/import_target/integrity/list_album_ids/media_file` |
 | `QaMetadataSource` | `:18` | QA 元数据读取 |
+| `OwnedTelemetryWork` | `domain/runtime/ports.py` | 可选 `pending_work`，报告仍在运行的探测 |
+| `CancellableOperations` | `domain/sentrix/ports.py` | 可选 `cancel_operation`，请求并复查产品协作取消 |
 | `SentrixClient` | `domain/sentrix/ports.py:59` | 主产品 HTTP 语义端口（`API_PREFIX="/api/v1"`） |
 | `JsonHttpClient` | `domain/http/ports.py:61` | 原始 JSON HTTP |
 | `InferenceProvider` | `domain/runtime/ports.py:37` | `health/list_models/chat/chat_stream/token_count/capabilities/max_concurrency` |
@@ -1068,7 +1071,7 @@ T006 指标 v2 的可选契约见 [photobench-metrics-contract.md](photobench-me
 
 - ASR / 转写 / `transcript` 列不存在；
 - OCR 只有导入期 `ocr_text` 一条路，没有独立 PaddleOCR 适配器或 VLM 回退；
-- 无导入取消、无 batch/job；
+- 导入支持按 operation_id 协作取消（2026-10-23新增）；仍无持久 batch/job 队列；
 - 无云端大模型入口（评测可配，产品侧不内置）；
 - 记忆画像的模型同步留空；
 - 关系假设 / 角色假设 / 实体合并 / 洞察运行 / 主动建议等能力冻结。
@@ -1240,3 +1243,8 @@ Judge一致性v3进一步限定为明确“模型/助手的回答/答案/结论�
 保留同步 `POST /api/v1/imports`，新增可选 `operation_id` 和独立 `GET /api/v1/imports/{operation_id}/progress`。产品仅输出通用处理事实；`completed = imported + deduplicated + failed`，`total` 为实际扫描并应用 limit 后的支持媒体数，扫描前为 null。媒体计数完成后仍依次进行事件总结、参与者刷新、家庭图谱、人物画像，只有同步请求完成才终态。updated_at 是步骤更新时间，observed_at 是查询时间，不能互换。查询不会重放导入。
 
 由 domain ImportProgressStore 端口、application TrackImport 和 bootstrap 装配的有界进程内适配器实现；最多32个活跃跟踪、128条终态，重启或淘汰后404。重复在册ID409，容量不足429，均发生在副作用前。此能力不是持久作业队列，不承诺跨进程查询或取消产品执行。PhotoBench 使用运行快照中的同一客户端，每秒轮询、单次3秒超时，保存最后事实及查询故障；不盲重试导入POST。旧服务无进度时明确不可用。
+
+
+## T006 2026-10-23 协作取消与遥测探测
+
+详细契约及测试边界见[取消、调用事实与采样优化](../refactor/2026-10-23-cancellation-trace-deviations.md)。domain端口、application编排、infrastructure探测及bootstrap装配分层不变；产品同步导入配合协作取消，不引入持久队列。停止全部只请求测评相关任务停止，pending与worker真正退出分开。原始历史、null、TTL和3秒覆盖门槛保持；新运行的L2调用事实纳入真实模型调用统计，旧记录不补造。四机更新前重新核验占用，只激活授权8291/8872。受影响设备真实回归须使用新SHA，不能复用旧run标成新版。

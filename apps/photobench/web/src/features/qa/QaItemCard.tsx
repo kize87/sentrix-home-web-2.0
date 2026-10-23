@@ -114,8 +114,6 @@ export function QaItemCard({
   onToggle,
   onOpenImage,
   onOpenJudgeInput,
-  review,
-  onReviewChange,
 }: QaItemCardProps) {
   const s = summary as QaSummaryView;
   return (
@@ -153,8 +151,8 @@ export function QaItemCard({
               modelLabel={modelLabel}
               onOpenImage={onOpenImage}
               onOpenJudgeInput={onOpenJudgeInput}
-              review={review}
-              onReviewChange={onReviewChange}
+              review={undefined}
+              onReviewChange={undefined}
             />
           ) : null}
         </div>
@@ -179,8 +177,6 @@ function QaItemDetail({
   modelLabel,
   onOpenImage,
   onOpenJudgeInput,
-  review,
-  onReviewChange,
 }: QaItemDetailProps) {
   const turns = conversationTurns(detail);
   const chain = itemLayerChain(detail, albumId);
@@ -403,25 +399,7 @@ function QaItemDetail({
           JUDGE 模型输入 <span>↗</span>
         </button>
       </div>
-      <div className="review-editor">
-        <label>
-          人工复核
-          <select
-            value={review?.verdict ?? ""}
-            onChange={(event) => onReviewChange?.({ ...review, verdict: event.target.value })}
-          >
-            <option value="">未复核</option>
-            <option value="correct">正确</option>
-            <option value="partial">部分正确</option>
-            <option value="wrong">错误</option>
-          </select>
-        </label>
-        <input
-          value={review?.note ?? ""}
-          placeholder="复核备注（可选）"
-          onChange={(event) => onReviewChange?.({ ...review, note: event.target.value })}
-        />
-      </div>
+
     </>
   );
 }

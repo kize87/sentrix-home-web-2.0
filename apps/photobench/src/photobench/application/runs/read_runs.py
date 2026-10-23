@@ -468,5 +468,8 @@ class ReadRuns:
             if item_index < 0 or item_index >= len(items):
                 raise KeyError(f"item index out of range: {item_index}")
             item = analysis.hydrate_qa_metadata(items[item_index], self._qa_index())
+            if not item.get("scope_id") and state.get("scope_id"):
+                item["scope_id"] = state["scope_id"]
+                item["scope_source"] = "saved_run_scope_v1"
             item["review"] = (self.get_reviews(run_id).get("reviews") or {}).get(str(item.get("qa_id")))
             return {"index": item_index, "item": item}

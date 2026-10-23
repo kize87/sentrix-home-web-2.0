@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +40,7 @@ from sentrix.domain.assistant.intent import (
 )
 from sentrix.domain.assistant.models import ChatMessage, ChatRole
 from sentrix.domain.assistant.ports import ChatModel, ModelServiceError
+from sentrix.domain.media.progress import OperationCancelled
 
 log = logging.getLogger("sentrix.assistant.goal_planner")
 
@@ -79,7 +81,14 @@ class GoalPlanner:
             else max(1, int(os.getenv("SENTRIX_PLANNER_MAX_ATTEMPTS", str(DEFAULT_MAX_ATTEMPTS))))
         )
 
-    def declare(self, question: str, *, scope_id: str, history: str = "") -> PlannerResult:
+    def declare(
+        self,
+        question: str,
+        *,
+        scope_id: str,
+        history: str = "",
+        cancel_check: Callable[[], None] | None = None,
+    ) -> PlannerResult:
         # 历史折进 system 文本，不再插一条 system 消息——严格 chat template 要求 system
         # 必须在开头（1.0 ``goal_planner.py:115-117``，实测 24 题因此失败）。
         system = build_prompt() + history_prompt_suffix(history)
@@ -90,6 +99,8 @@ class GoalPlanner:
         last_reason = "invalid_planner_action"
         calls: list[dict[str, Any]] = []
         for attempt in range(self.max_attempts):
+            if cancel_check is not None:
+                cancel_check()
             started = time.perf_counter()
             call: dict[str, Any] = {
                 "step_id": f"planner_{attempt + 1}",
@@ -105,6 +116,8 @@ class GoalPlanner:
                     completion_tokens=reply.completion_tokens,
                     finish_reason=reply.finish_reason,
                 )
+            except OperationCancelled:
+                raise
             except Exception as error:
                 log.exception("planner call failed: scope=%s attempt=%s", scope_id, attempt + 1)
                 # 只有模型服务这一侧的失败才带说明：它的文案里已经写明了端点地址，直接

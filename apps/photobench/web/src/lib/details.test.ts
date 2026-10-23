@@ -170,7 +170,7 @@ describe("itemTimingBreakdown（1.0 :2122-2133）", () => {
       model_ms: 222,
       tool_ms: null,
       judge_ms: 33,
-      other_ms: 0,
+      other_ms: null,
     });
   });
 

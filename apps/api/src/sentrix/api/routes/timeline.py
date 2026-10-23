@@ -16,6 +16,7 @@ from sentrix.api.routes.identity import _confirmed_person_events
 from sentrix.api.routes.insights import run_insights_for_scope
 from sentrix.api.routes.media import build_import_assets
 from sentrix.api.schemas.family import FamilyRunResponse
+from sentrix.api.schemas.operations import OperationCancellationResponse
 from sentrix.api.schemas.timeline import (
     ImportBatchRequest,
     ImportBatchResponse,
@@ -39,6 +40,7 @@ from sentrix.application.memories.read_timeline import (
 )
 from sentrix.application.memories.summarize_event import SummarizeEvent
 from sentrix.bootstrap.container import Container
+from sentrix.domain.media.progress import OperationCancelled
 
 log = logging.getLogger("sentrix.api.timeline")
 
@@ -148,19 +150,37 @@ def import_album(
     兜住（``deduplicated`` 那一列）。判据与 ``RunInsights`` 自己的 docstring 一致。
     """
     tracker = None
-    if request.operation_id is not None:
+    operation_id = request.operation_id
+    operation = "import:" + operation_id if operation_id else None
+    if operation:
         try:
-            tracker = TrackImport(container.import_progress, request.operation_id, request.scope_id)
+            container.operation_control.start(operation)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except OverflowError as error:
             raise HTTPException(status_code=429, detail=str(error)) from error
+    if request.operation_id is not None:
+        try:
+            tracker = TrackImport(container.import_progress, request.operation_id, request.scope_id)
+        except (ValueError, OverflowError) as error:
+            if operation:
+                container.operation_control.finish(operation)
+            raise HTTPException(
+                status_code=409 if isinstance(error, ValueError) else 429, detail=str(error)
+            ) from error
     try:
         return _execute_import(request, container, tracker)
+    except OperationCancelled:
+        if tracker:
+            tracker.update(status="cancelled", stage="cancelled", error="cancelled by caller")
+        raise HTTPException(status_code=409, detail="import cancelled; partial data retained") from None
     except Exception as error:
         if tracker:
             tracker.update(status="failed", error=f"{type(error).__name__}: {error}")
         raise
+    finally:
+        if operation:
+            container.operation_control.finish(operation)
 
 
 @router.get("/imports/{operation_id}/progress")
@@ -180,11 +200,15 @@ def _execute_import(
     container: Container,
     tracker: TrackImport | None,
 ) -> ImportBatchResponse:
+    operation_id = request.operation_id
     album = ImportAlbum(
         importer=build_import_assets(container, observe=True),
         summarize_event=_summarize_event(container).execute,
         workers=container.settings.album_workers,
         progress=tracker.update if tracker else None,
+        cancel_check=(lambda: container.operation_control.check("import:" + operation_id))
+        if operation_id
+        else None,
     )
     try:
         result = album.execute(
@@ -197,14 +221,17 @@ def _execute_import(
     # ``event_participants`` 仍是 0 条，事件摘要也就写不出「王建国、张晓莉」。
     # 刷新会顺带按参与者重写摘要（``participant_summary``），人名因此进入事件。
     if tracker:
+        container.operation_control.check("import:" + tracker.operation_id)
         tracker.update(stage="participant_refresh")
     observations = container.observation_repository.list_scope(request.scope_id, limit=100000)
     _confirmed_person_events(container).refresh_participants([item.id for item in observations])
     # **顺序照 1.0**：``pipeline.py:733-734`` 是先 family 后 person-insights。
     if tracker:
+        container.operation_control.check("import:" + tracker.operation_id)
         tracker.update(stage="family_graph")
     family_graph = _maybe_run_family_graph(container, request.scope_id)
     if tracker:
+        container.operation_control.check("import:" + tracker.operation_id)
         tracker.update(stage="person_insights")
     insights = _maybe_run_insights(container, request.scope_id, result.imported)
     response = ImportBatchResponse(
@@ -296,3 +323,12 @@ def _maybe_run_insights(container: Container, scope_id: str, imported: int) -> I
         return None
     counts = run_insights_for_scope(container, scope_id)
     return InsightCounts(**counts)
+
+
+@router.post("/imports/{operation_id}/cancel", status_code=202)
+async def cancel_import(operation_id: str, request: Request) -> OperationCancellationResponse:
+    try:
+        result = get_container(request).operation_control.request_cancel("import:" + operation_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="import not owned by this process") from None
+    return OperationCancellationResponse.model_validate({**result, "operation_id": operation_id})

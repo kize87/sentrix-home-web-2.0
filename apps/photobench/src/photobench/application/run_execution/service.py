@@ -96,7 +96,7 @@ from photobench.domain.runtime.ports import (
     RunRuntimeSnapshot,
     TelemetryProvider,
 )
-from photobench.domain.sentrix.ports import SentrixClient
+from photobench.domain.sentrix.ports import CancellableOperations, SentrixClient
 
 #: 2.0 的 ``AssetStatus``（``domain/media/models.py:46``）只有四态，1.0 那张表里
 #: 的 ``video-queued`` / ``semantic_enriching`` 等 2.0 一个都没有。**不照抄 1.0 的表**：
@@ -288,6 +288,7 @@ class RunExecution:
     _state: RunState | None = field(default=None, repr=False)
     _judge: JudgeRunner | None = field(default=None, repr=False)
     _sampler: GpuSampler | None = field(default=None, repr=False)
+    _background_threads: list[threading.Thread] = field(default_factory=list, repr=False)
     #: 这一轮的输入。**它不进 ``state.data``**：那份 dict 是落盘契约，会被
     #: ``json.dumps`` 写进 run.json，而 ``RunRequest`` 不是可序列化的值——
     #: 塞进去会让每一次快照写都抛 ``TypeError``，而错误被后台写线程记成
@@ -301,6 +302,13 @@ class RunExecution:
         """当前/最近一轮的状态。取消与写侧路由要用它。"""
         return self._state
 
+    def request_cancel(self, source: str = "api") -> None:
+        """Broadcast-only path: no network, model lifecycle or synchronous persistence."""
+        self._cancel_source = source
+        self._cancel_signal.set()
+        if self._state is not None:
+            self._state.request_cancel(source)
+
     def cancel(self, source: str = "api") -> None:
         """1.0 ``BenchmarkRun.cancel``（``:2232``）的 2.0 版。
 
@@ -313,8 +321,7 @@ class RunExecution:
         T922 要处理它）。这里不假装调过——那会让 run.json 里出现一个假的
         ``batch_cancel_requested``。
         """
-        self._cancel_source = source
-        self._cancel_signal.set()
+        self.request_cancel(source)
         state = self._state
         if state is None:
             return
@@ -1188,14 +1195,25 @@ class RunExecution:
                     state.record_phase("photo_import", "progress", progress)
                 state.persist()
 
-            result = import_with_progress(
-                self.client,
-                observe=save_progress,
-                scope_id=scope_id,
-                directory=absolute,
-                limit=limit,
-                timeout=request.import_timeout,
-            )
+            try:
+                result = import_with_progress(
+                    self.client,
+                    observe=save_progress,
+                    scope_id=scope_id,
+                    directory=absolute,
+                    limit=limit,
+                    timeout=request.import_timeout,
+                    cancel_event=state.cancel_event,
+                    register_worker=self._background_threads.append,
+                )
+            except Exception as error:
+                progress = (state.get("phases") or {}).get("photo_import", {}).get("progress", {})
+                operation_id = progress.get("operation_id")
+                if operation_id:
+                    self._cancel_product_operation("import", str(operation_id))
+                if state.cancelled:
+                    raise RunCancelledError(f"import cancelled: {error}") from error
+                raise
             # 同步导入把「落库 + VLM 观察 + 归属 + 总结」都装在一个请求里；
             # 分项耗时由后端回传，这里累加后单独记进相位，别让 64 分钟全叫「导入」。
             for key, value in (result.get("timings") or {}).items():
@@ -1690,18 +1708,40 @@ class RunExecution:
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=concurrency, thread_name_prefix="qa-agent"
             ) as executor:
-                futures = {
-                    executor.submit(self._evaluate_one, row, scope_id, assets_by_name, request): index
-                    for index, row in pending_rows
-                }
+                queue = iter(pending_rows)
+                queue_exhausted = False
+                futures: dict[concurrent.futures.Future[dict[str, Any]], int] = {}
+
+                def fill_agent_slots() -> None:
+                    nonlocal queue_exhausted
+                    while (
+                        len(futures) < concurrency
+                        and len(futures) + len(judge_futures) < concurrency + 2 * judge_concurrency
+                        and not state.cancelled
+                    ):
+                        next_row = next(queue, None)
+                        if next_row is None:
+                            queue_exhausted = True
+                            break
+                        index, row = next_row
+                        futures[
+                            executor.submit(self._evaluate_one, row, scope_id, assets_by_name, request)
+                        ] = index
+
+                fill_agent_slots()
                 # Drain both pools as work completes. Waiting only on Agent futures
                 # withholds scores for the whole album when one Agent is slow.
                 if not futures:
                     state.record_phase("qa_eval", "agent_phase_finished_at", now_iso())
                     state.record_phase("qa_eval", "agent_phase_wall_ms", 0.0)
                 while futures or judge_futures:
+                    if state.cancelled:
+                        for pending in (*futures, *judge_futures):
+                            pending.cancel()
                     done, _ = concurrent.futures.wait(
-                        (*futures, *judge_futures), return_when=concurrent.futures.FIRST_COMPLETED
+                        (*futures, *judge_futures),
+                        timeout=0.2,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
                     )
                     for completed_future in done:
                         if completed_future in judge_futures:
@@ -1710,6 +1750,9 @@ class RunExecution:
                                 judged = completed_future.result()
                                 with state.lock:
                                     items[index] = judged
+                            except (RunCancelledError, concurrent.futures.CancelledError):
+                                with state.lock:
+                                    items[index]["judge_status"] = "cancelled"
                             except Exception as exc:  # noqa: BLE001
                                 with state.lock:
                                     items[index]["judge_status"] = "failed"
@@ -1717,23 +1760,30 @@ class RunExecution:
                             judge_done += 1
                             record_progress()
                             state.persist()
+                            fill_agent_slots()
                             continue
                         future = completed_future
                         index = futures.pop(future)
                         try:
                             item = future.result()
-                        except RunCancelledError as exc:
+                        except (RunCancelledError, concurrent.futures.CancelledError) as exc:
                             # **被取消的题不是失败的题。** 1.0 的 resume 靠
                             # ``execution_status not in {"scheduled", "running"}`` 挑出「从没
                             # 开始过」的题（``:3414-3417``），而取消时还在排队里的题正好是从没
                             # 开始过的。标成 failed 会让 resume 把它们当成已完成跳过——
                             # 那正是「取消一次，155 题只能整轮重跑」的成因。
                             item = {
+                                "qa_id": rows[index].get("qa_id"),
                                 "error": f"cancelled while waiting: {exc}",
                                 "execution_status": "scheduled",
                             }
                         except Exception as exc:  # noqa: BLE001 —— 1.0 ``:3218``
-                            item = {"error": repr(exc), "failed": True, "execution_status": "failed"}
+                            item = {
+                                "qa_id": rows[index].get("qa_id"),
+                                "error": repr(exc),
+                                "failed": True,
+                                "execution_status": "failed",
+                            }
                         item["_index"] = index
                         # 「没有答案可打分的题」与「还没打分的题」是两件事（1.0 ``:3220``）：
                         # 前者标 skipped，后者标 pending。跳过判分的 item **绝不**再排进
@@ -1742,13 +1792,14 @@ class RunExecution:
                             item["judge_status"] = "skipped"
                         else:
                             item.setdefault("judge_status", "pending")
-                            if judge is not None and judge_pool is not None:
+                            if judge is not None and judge_pool is not None and not state.cancelled:
                                 if judge_phase_started is None:
                                     judge_phase_started = time.perf_counter()
                                     state.record_phase("qa_eval", "judge_phase_started_at", now_iso())
                                 judge_futures[judge_pool.submit(run_judge, item, rows[index])] = index
                         items[index] = item
-                        if not futures:
+                        fill_agent_slots()
+                        if not futures and queue_exhausted:
                             state.record_phase("qa_eval", "agent_phase_finished_at", now_iso())
                             state.record_phase(
                                 "qa_eval",
@@ -1766,6 +1817,17 @@ class RunExecution:
                 state.record_phase("qa_eval", "judge_phase_started_at", first[2])
                 state.record_phase("qa_eval", "judge_phase_finished_at", last[3])
                 state.record_phase("qa_eval", "judge_phase_wall_ms", round((last[1] - first[0]) * 1000, 1))
+        if state.cancelled:
+            for index, row in pending_rows:
+                items.setdefault(
+                    index,
+                    {
+                        "qa_id": row.get("qa_id"),
+                        "execution_status": "scheduled",
+                        "judge_status": "skipped",
+                        "cancellation_reason": "not started before cancellation",
+                    },
+                )
         with state.lock:
             ordered = [items[i] for i in sorted(items)]
             for item in ordered:
@@ -1821,6 +1883,7 @@ class RunExecution:
         answer_refs = normalize_media_refs(row, "answer_evidence") or gt_refs
         item: dict[str, Any] = {
             "qa_id": row.get("qa_id"),
+            "scope_id": scope_id,
             "question": query,
             "reference_answer": str(row.get("answer") or ""),
             "retrieval_media_refs": gt_refs,
@@ -1839,6 +1902,7 @@ class RunExecution:
             if row.get(name) is not None:
                 item[name] = row[name]
         try:
+            self._cancel_wait(0)
             item["execution_status"] = "started"
             conversation_id = str(
                 self.client.start_conversation(scope_id=scope_id, title=f"{row.get('qa_id') or 'qa'}").get(
@@ -1857,6 +1921,7 @@ class RunExecution:
                     if turn_index < len(conversation) and isinstance(conversation[turn_index], dict)
                     else {}
                 )
+                self._cancel_wait(0)
                 started_turn = self.client.start_turn(
                     conversation_id=conversation_id, message=message, timeout=300
                 )
@@ -2022,6 +2087,8 @@ class RunExecution:
             )
             item["attribution"] = derive_attribution(item)
             item["execution_status"] = "completed"
+        except RunCancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 —— 1.0 ``:3571``
             message = str(exc).lower()
             # **判据比 1.0 多一条 ``isinstance``**：1.0 ``:3573`` 只按文案里的
@@ -2046,6 +2113,82 @@ class RunExecution:
             )
         return item
 
+    def refresh_cleanup(self) -> bool:
+        """Recheck retained ownership after execution exited; never claim a live worker is stopped."""
+        state = self._state
+        if state is None:
+            return False
+        with state.lock:
+            cleanup = copy.deepcopy(state.data.get("cleanup") or {})
+        for operation in cleanup.get("operations") or []:
+            if operation.get("cleanup_status") == "stopped":
+                continue
+            if isinstance(self.client, CancellableOperations):
+                try:
+                    operation.update(
+                        self.client.cancel_operation(
+                            kind=str(operation["kind"]),
+                            operation_id=str(operation["operation_id"]),
+                            timeout=1,
+                        )
+                    )
+                except Exception as error:
+                    operation["error"] = str(error)
+        pending = [thread.name for thread in self._background_threads if thread.is_alive()]
+        if self._sampler is not None:
+            pending.extend(self._sampler.pending_work())
+        if state.writer_pending():
+            pending.append("snapshot-writer")
+        if any(operation.get("cleanup_status") != "stopped" for operation in cleanup.get("operations") or []):
+            pending.append("product-operation")
+        cleanup.update(
+            status="stop_pending" if pending else "stopped", pending_work=pending, checked_at=now_iso()
+        )
+        with state.lock:
+            state.data["cleanup"] = cleanup
+            if not pending:
+                progress = state.data.get("phases", {}).get("photo_import", {}).get("progress", {})
+                if progress.get("observer_stop_pending"):
+                    progress.update(observer_stop_pending=False, observer_stopped_after_deadline=True)
+                integrity = state.data.get("phases", {}).get("gpu_metrics", {}).get("sampling_integrity", {})
+                if integrity.get("stop_pending_threads"):
+                    integrity.update(stop_pending_threads=[], stopped_after_deadline=True)
+                persistence = state.data.get("persistence") or {}
+                if persistence.get("status") == "stop_pending":
+                    persistence.update(status="recovered", recovered_at=now_iso())
+        # A successful explicit checkpoint is required before releasing the retained execution.
+        self.writer.write_snapshot(state.run_id, state.snapshot())
+        return not pending
+
+    def _cancel_product_operation(self, kind: str, operation_id: str) -> dict[str, Any]:
+        facts: dict[str, Any] = {"kind": kind, "operation_id": operation_id, "cleanup_status": "pending"}
+        deadline = time.monotonic() + 10
+        if isinstance(self.client, CancellableOperations):
+            try:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining < 1:
+                        break
+                    facts.update(
+                        self.client.cancel_operation(
+                            kind=kind, operation_id=operation_id, timeout=min(3, int(remaining))
+                        )
+                    )
+                    if facts.get("cleanup_status") == "stopped":
+                        return facts
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.1)
+            except Exception as error:
+                facts["error"] = str(error)
+        else:
+            facts["error"] = "product cancellation unsupported"
+        if self._state is not None:
+            with self._state.lock:
+                self._state.data.setdefault("cleanup", {}).setdefault("operations", []).append(facts)
+                self._state.data["cleanup"]["status"] = "stop_pending"
+        return facts
+
     def _await_turn(self, turn_id: str, request: RunRequest) -> dict[str, Any]:
         """1.0 ``wait_for_assistant_turn``（``:909``）的 2.0 版。
 
@@ -2061,15 +2204,25 @@ class RunExecution:
         「模型答错/被 guard 拦下」与「网络断了」压成同一个 ``execution_status``。
         """
         deadline = time.monotonic() + request.turn_timeout
-        polled = self.client.get_turn(turn_id=turn_id)
-        while str(polled.get("status") or "") in TURN_PENDING_STATUSES:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"assistant turn {turn_id} did not complete within {request.turn_timeout}s"
-                )
-            self._cancel_wait(0.5)
+        try:
+            self._cancel_wait(0)
             polled = self.client.get_turn(turn_id=turn_id)
-        return polled
+            while str(polled.get("status") or "") in TURN_PENDING_STATUSES:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"assistant turn {turn_id} did not complete within {request.turn_timeout}s"
+                    )
+                self._cancel_wait(0.5)
+                polled = self.client.get_turn(turn_id=turn_id)
+            return polled
+        except Exception:
+            cleanup = self._cancel_product_operation("turn", turn_id)
+            if self._state is not None:
+                with self._state.lock:
+                    self._state.data.setdefault("phases", {}).setdefault("qa_eval", {}).setdefault(
+                        "cancelled_operations", []
+                    ).append(cleanup)
+            raise
 
 
 def _parse_sse_line(line: str) -> dict[str, Any] | None:

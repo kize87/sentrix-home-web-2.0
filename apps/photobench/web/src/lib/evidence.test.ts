@@ -193,3 +193,7 @@ describe("isDirectEvidence（1.0 :712-717）", () => {
     expect(isDirectEvidence(item, "z.jpg")).toBe(false);
   });
 });
+
+it("2.0 实际轮次与题面轮次合并，实际状态和回答优先", () => {
+  expect(conversationTurns({ conversation: [{ message: "题面", expected_action: "answer" }], runtime_turns: [{ message: "实际", turn_status: "complete", answer: "已有回答" }] })).toEqual([{ message: "实际", expected_action: "answer", turn_status: "complete", answer: "已有回答" }]);
+});

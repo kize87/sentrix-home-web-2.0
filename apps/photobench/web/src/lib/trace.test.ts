@@ -694,3 +694,21 @@ describe("itemToolTrace / toolExecutionSteps (:1503-1512)", () => {
     ).toHaveLength(2);
   });
 });
+
+describe("2.0 已存事实与缺失时延", () => {
+  it("请求墙钟不会冒充生成耗时，缺失 TTFT 不会变成0", () => {
+    const call = { call_type: "agent", duration_ms: 250, ttft_ms: null };
+    const timing = callAgentLoopTiming({}, call);
+    expect(timing.modelMs).toBe(250);
+    expect(timing.ttftMs).toBeNull();
+    expect(timing.generationMs).toBeNull();
+    expect(callLatencySegments({}, call)).toEqual([{ kind: "model-request", label: "模型请求墙钟（未拆 TTFT）", ms: 250 }]);
+    expect(callAgentLoopTiming({}, { duration_ms: null }).totalMs).toBeNull();
+  });
+  it("展示带版本的确定性派生来源", () => {
+    expect(callObservation({ call_observation: { source: "saved_call_facts_v1", trigger: "步骤: s1" } }).source).toBe("已存调用事实（规则 v1）");
+  });
+  it("空工具索引不绑定到首轮调用", () => {
+    expect(normalizedToolCallIndex({ model_call_metrics: [{}] }, { model_call_index: null }, 0)).toBeNull();
+  });
+});

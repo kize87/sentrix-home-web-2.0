@@ -124,6 +124,7 @@ class CompleteEventPayload(BaseModel):
         default_factory=dict,
         description=(
             "Execution facts. model_calls optionally includes status, attempt, duration_ms and "
+            "call_observation (kind/purpose/trigger/outcome/source/observation_version), "
             "tool_argument_parse_facts (json_object_valid per native tool envelope); "
             "plain-text completion is not a JSON parse attempt."
         ),

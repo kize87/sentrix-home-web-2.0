@@ -681,3 +681,128 @@ def test_unknown_qa_set_is_rejected_before_scheduling(tmp_path):
     suites = _suites(tmp_path)
     with pytest.raises(InvalidRequestError, match="unknown qa_set"):
         suites.start_suite(_payload(qa_set="missing"))
+
+
+def test_cancel_all_broadcast_survives_one_run_failure(tmp_path):
+    from types import SimpleNamespace
+
+    seen = []
+
+    def broken(**_kwargs):
+        seen.append("first")
+        raise OSError("disk full")
+
+    suites = _suites(tmp_path)
+    suites._active = {
+        "first": SimpleNamespace(state={"status": "running"}, cancel=broken),
+        "second": SimpleNamespace(
+            state={"status": "running"}, cancel=lambda **_kwargs: seen.append("second")
+        ),
+    }
+    result = suites.cancel_active_suite()
+    assert seen == ["first", "second"]
+    assert result["cancelled"] == ["second"]
+    assert "disk full" in result["errors"]["first"]
+
+
+def test_cancel_all_includes_rejudge_and_blocks_admission_until_exit(tmp_path, monkeypatch):
+    from photobench.application.run_execution.judge import JudgeRunner
+
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def judge(*_args, **_kwargs):
+        calls.append(1)
+        entered.set()
+        assert release.wait(5)
+        return {"score": 1, "reason": "test"}
+
+    monkeypatch.setattr(JudgeRunner, "judge", judge)
+    monkeypatch.setattr(JudgeRunner, "judge_task_action", lambda *_a, **_kw: {})
+    state = _judged_state()
+    state["qa_concurrency"] = 1
+    suites = _suites(tmp_path, store=FakeRunStore({"run-1": state}))
+    try:
+        task = suites.start_rejudge("run-1", {"system_prompt": "test"})
+        assert entered.wait(3)
+        assert task["rejudge_id"] in suites.cancel_active_suite()["auxiliary"]
+        assert suites.work_status()["cleanup_status"] == "pending"
+        with pytest.raises(InvalidRequestError):
+            suites.start_suite(_payload())
+    finally:
+        release.set()
+    assert _wait_until(lambda: suites.work_status()["cleanup_status"] == "stopped")
+    assert state["rejudge"]["status"] == "cancelled"
+    assert calls == [1]
+    assert state["items"][0]["judge"]["score"] is None
+    assert state["items"][0]["judge_history"][0]["judge"]["score"] == 0
+
+
+def test_cancel_all_includes_memory_profile_without_replaying_new_questions(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+
+    def pause(seconds):
+        if seconds == 5:
+            entered.set()
+            assert release.wait(5)
+
+    state = _judged_state()
+    suites = _suites(tmp_path, store=FakeRunStore({"run-1": state}), sleep=pause)
+    try:
+        task = suites.start_memory_profile({"run_ids": ["run-1"], "vllm_manager_url": "http://manager"})
+        assert entered.wait(3)
+        assert task["task_id"] in suites.cancel_active_suite()["auxiliary"]
+    finally:
+        release.set()
+    assert _wait_until(lambda: suites.work_status()["cleanup_status"] == "stopped")
+    assert state["memory_profile"]["status"] == "cancelled"
+    assert state["memory_profile"].get("requests_total_so_far", 0) == 0
+    assert state["memory_profile"]["items_integrity_ok"] is True
+
+
+@pytest.mark.parametrize("method", ["rejudge", "memory"])
+def test_auxiliary_thread_start_failure_is_terminal_and_releases_reservation(tmp_path, monkeypatch, method):
+    state = _judged_state()
+    suites = _suites(tmp_path, store=FakeRunStore({"run-1": state}))
+
+    def failure(_thread):
+        raise RuntimeError("cannot start worker")
+
+    monkeypatch.setattr(threading.Thread, "start", failure)
+    with pytest.raises(RuntimeError, match="cannot start worker"):
+        if method == "rejudge":
+            suites.start_rejudge("run-1", {"system_prompt": "test"})
+        else:
+            suites.start_memory_profile({"run_ids": ["run-1"], "vllm_manager_url": "http://manager"})
+    assert suites.work_status()["cleanup_status"] == "stopped"
+    assert state["rejudge" if method == "rejudge" else "memory_profile"]["status"] == "failed"
+
+
+@pytest.mark.parametrize("failure", ["timeout", "poll", "cancel"])
+def test_memory_wait_failure_retains_product_cleanup_ownership(failure):
+    from photobench.application.runs.suites import _await_turn
+    from photobench.domain.runs.execution import RunCancelledError
+
+    event = threading.Event()
+    if failure == "cancel":
+        event.set()
+    calls = []
+
+    class Client:
+        def get_turn(self, *, turn_id):
+            if failure == "poll":
+                raise ConnectionError("disconnected")
+            return {"status": "running"}
+
+        def cancel_operation(self, *, kind, operation_id, timeout):
+            calls.append((kind, operation_id))
+            return {"cleanup_status": "pending"}
+
+    cleanup = {}
+    expected = {"timeout": TimeoutError, "poll": ConnectionError, "cancel": RunCancelledError}[failure]
+    with pytest.raises(expected):
+        _await_turn(Client(), "turn-1", 0, lambda _: None, event, cleanup)
+    assert calls == [("turn", "turn-1")]
+    assert event.is_set()
+    assert cleanup["cancelled_operations"][0]["cleanup_status"] == "pending"
+    assert "wait_error" in cleanup["cancelled_operations"][0]

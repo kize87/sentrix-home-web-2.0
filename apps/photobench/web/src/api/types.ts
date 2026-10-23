@@ -727,3 +727,19 @@ export interface BenchConfig {
   judge_providers?: Array<Record<string, unknown>>;
   [key: string]: unknown;
 }
+
+
+/** Live ownership, independent of business terminal status and historical runs. */
+export interface ActiveWorkStatus {
+  work: Array<{
+    id: string;
+    kind: string;
+    worker_alive: boolean;
+    cancel_requested?: boolean;
+    cleanup?: Record<string, unknown>;
+    operations?: Record<string, unknown>[];
+    pending_work?: string[];
+  }>;
+  cleanup_status: string;
+  errors?: Record<string, string>;
+}

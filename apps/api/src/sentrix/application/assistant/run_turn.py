@@ -77,6 +77,8 @@ from sentrix.domain.assistant.task_state import ACTING, FINALIZING, TaskState, T
 from sentrix.domain.assistant.tool_policy import ToolAction, ToolPolicy
 from sentrix.domain.assistant.tools import FINAL_ANSWER_TOOL, TOOLS_BY_NAME, ToolSpec
 from sentrix.domain.errors import DomainError
+from sentrix.domain.media.ports import OperationControl
+from sentrix.domain.media.progress import OperationCancelled
 
 log = logging.getLogger("sentrix.assistant.run_turn")
 
@@ -271,8 +273,23 @@ def _turn_trace(session: _Session, planned: PlannerResult | None) -> Mapping[str
     state = session.state
     ledger = session.ledger
     requirements = [dict(item) for item in ledger.as_payload()]
+    calls = [dict(call) for call in [*(planned.model_calls if planned else ()), *session.model_calls]]
+    for call in calls:
+        call.setdefault(
+            "call_observation",
+            {
+                "kind": call.get("call_type"),
+                "purpose": call.get("call_type"),
+                "trigger": "步骤: " + str(call.get("step_id")),
+                "outcome": "调用失败: " + str(call.get("error_type"))
+                if call.get("status") == "error"
+                else "finish_reason: " + str(call.get("finish_reason") or "未记录"),
+                "source": "backend_recorded",
+                "observation_version": 1,
+            },
+        )
     return {
-        "model_calls": [*(planned.model_calls if planned else ()), *session.model_calls],
+        "model_calls": calls,
         "planner": {
             # ``fallback_reason`` 为空 = 规划器正常答了；非空 = 它退回了规则/失败。
             # ``planned`` 为空 = 压根没走到规划（政策拒答那条提前 return 了）。
@@ -505,7 +522,9 @@ class RunTurn:
         turns: TurnRepository,
         toolbox: AssistantToolbox,
         profile: TurnProfile = DEFAULT_PROFILE,
+        operation_control: OperationControl | None = None,
     ) -> None:
+        self._operation_control = operation_control
         self._model = model
         self._conversations = conversations
         self._turns = turns
@@ -517,6 +536,10 @@ class RunTurn:
         self._planner = GoalPlanner(model)
         # L2 语义评审：与主循环同一个端点（1.0 也是同一个 chat_fn）。
         self._judge = FaithfulnessJudge(model)
+
+    def _check_cancel(self, turn_id: str) -> None:
+        if self._operation_control is not None:
+            self._operation_control.check("turn:" + turn_id)
 
     # ---- 建回合 -------------------------------------------------------------
 
@@ -542,16 +565,42 @@ class RunTurn:
             created_at=now,
             updated_at=now,
         )
-        self._turns.create(record)
-        self._conversations.add_message(
-            conversation_id=record.conversation_id,
-            scope_id=record.scope_id,
-            turn_id=record.id,
-            role=ChatRole.USER.value,
-            content=request.question,
-            created_at=now,
-        )
+        operation = "turn:" + record.id
+        if self._operation_control is not None:
+            self._operation_control.start(operation)
+        try:
+            self._turns.create(record)
+            self._conversations.add_message(
+                conversation_id=record.conversation_id,
+                scope_id=record.scope_id,
+                turn_id=record.id,
+                role=ChatRole.USER.value,
+                content=request.question,
+                created_at=now,
+            )
+        except Exception:
+            if self._operation_control is not None:
+                self._operation_control.finish(operation)
+            raise
         return record
+
+    def fail_start(self, turn_id: str) -> None:
+        """Record a worker startup failure; no model request has been issued."""
+        try:
+            self._turns.finish(
+                turn_id,
+                status=TurnStatus.FAILED.value,
+                termination_reason="worker_start_failed",
+                answer="",
+                attachments=(),
+                requirements=(),
+                retrieved_candidates=(),
+                trace={"worker_error": "worker_start_failed"},
+                updated_at=datetime.now(UTC),
+            )
+        finally:
+            if self._operation_control is not None:
+                self._operation_control.finish("turn:" + turn_id)
 
     # ---- 跑回合 -------------------------------------------------------------
 
@@ -579,53 +628,70 @@ class RunTurn:
         # 先绑成 None，``_turn_trace`` 据此报 ``not_planned``——没规划过与规划成功
         # 是两件事，编一个「ok」会让那个面板把拒答读成一次正常规划。
         planned: PlannerResult | None = None
-        # 1.0 ``runtime.py:1725``：政策拒答在**任何模型调用之前**返回固定的拒绝语——
-        # 不规划、不调工具、不进模型。位置也照搬（在规划之前）。
-        refusal = detect_policy_refusal(record.question)
         answer = ""
-        if refusal is not None:
-            session.state.finish(TerminationReason.POLICY_REFUSAL)
-            answer = refusal
-        else:
-            history = "\n".join(
-                f"{message.role.value}: {message.content}"
-                for message in self._conversations.history_for_prompt(record.conversation_id, HISTORY_LIMIT)
-                if message.turn_id != record.id
-            )
-            planned = self._planner.declare(record.question, scope_id=record.scope_id, history=history)
-            if not planned.ok:
-                # 1.0 ``runtime.py:1828``：规划不出来就以 planner_blocked 收场，不再往下走。
-                # 拿一条编出来的需求去检索，比诚实地说规划失败更糟。
-                # 终止原因仍是 ``planner_blocked``（与 1.0 的库可比），但**文案按原因分岔**：
-                # 服务侧挂掉时说模型服务，模型自己规划不出时才说规划。
-                log.warning(
-                    "规划失败: turn=%s reason=%s detail=%s",
-                    turn_id,
-                    planned.fallback_reason,
-                    planned.detail,
-                )
-                session.state.finish(TerminationReason.PLANNER_BLOCKED)
-                answer = _planner_failure_answer(planned)
+        try:
+            self._check_cancel(turn_id)
+            # 1.0 ``runtime.py:1725``：政策拒答在**任何模型调用之前**返回固定的拒绝语——
+            # 不规划、不调工具、不进模型。位置也照搬（在规划之前）。
+            refusal = detect_policy_refusal(record.question)
+            answer = ""
+            if refusal is not None:
+                session.state.finish(TerminationReason.POLICY_REFUSAL)
+                answer = refusal
             else:
-                session.ledger.requirements = list(planned.requirements or ())
-                self._publish(
-                    session,
-                    session.state.emit(
-                        ProgressStage.PLANNING,
-                        ProgressStatus.COMPLETE,
-                        "已确认需要哪些证据。",
-                        kind="plan",
-                        payload={"requirements": list(session.ledger.as_payload())},
-                    ),
+                history = "\n".join(
+                    f"{message.role.value}: {message.content}"
+                    for message in self._conversations.history_for_prompt(
+                        record.conversation_id, HISTORY_LIMIT
+                    )
+                    if message.turn_id != record.id
                 )
-                try:
-                    answer = self._converse(session, record)
-                except Exception:
-                    # 兜底不是「错误处理」，是「绝不让收尾原因落空」：任何未预料的异常也
-                    # 必须以一个有名字的原因结束，而不是留下一个半开的回合。
-                    log.exception("回合执行中抛出未预料的异常: %s", turn_id)
-                    session.state.finish(TerminationReason.MODEL_ERROR)
-                    answer = emergency.clarify_answer(TerminationReason.MODEL_ERROR)
+                planned = self._planner.declare(
+                    record.question,
+                    scope_id=record.scope_id,
+                    history=history,
+                    cancel_check=lambda: self._check_cancel(turn_id),
+                )
+                if not planned.ok:
+                    # 1.0 ``runtime.py:1828``：规划不出来就以 planner_blocked 收场，不再往下走。
+                    # 拿一条编出来的需求去检索，比诚实地说规划失败更糟。
+                    # 终止原因仍是 ``planner_blocked``（与 1.0 的库可比），但**文案按原因分岔**：
+                    # 服务侧挂掉时说模型服务，模型自己规划不出时才说规划。
+                    log.warning(
+                        "规划失败: turn=%s reason=%s detail=%s",
+                        turn_id,
+                        planned.fallback_reason,
+                        planned.detail,
+                    )
+                    session.state.finish(TerminationReason.PLANNER_BLOCKED)
+                    answer = _planner_failure_answer(planned)
+                else:
+                    session.ledger.requirements = list(planned.requirements or ())
+                    self._publish(
+                        session,
+                        session.state.emit(
+                            ProgressStage.PLANNING,
+                            ProgressStatus.COMPLETE,
+                            "已确认需要哪些证据。",
+                            kind="plan",
+                            payload={"requirements": list(session.ledger.as_payload())},
+                        ),
+                    )
+                    try:
+                        answer = self._converse(session, record)
+                    except OperationCancelled:
+                        raise
+                    except Exception:
+                        # 兜底不是「错误处理」，是「绝不让收尾原因落空」：任何未预料的异常也
+                        # 必须以一个有名字的原因结束，而不是留下一个半开的回合。
+                        log.exception("回合执行中抛出未预料的异常: %s", turn_id)
+                        session.state.finish(TerminationReason.MODEL_ERROR)
+                        answer = emergency.clarify_answer(TerminationReason.MODEL_ERROR)
+
+            self._check_cancel(turn_id)
+        except OperationCancelled:
+            session.state.finish(TerminationReason.CANCELLED)
+            answer = ""
 
         # 收尾前给还开着的需求补上真实原因：**是试过没拿到，还是根本没试**。
         # 必须在最后一次 ``as_payload()`` 之前——它同时喂给落库与返回值。
@@ -687,6 +753,7 @@ class RunTurn:
         *,
         call_type: str = "agent",
     ) -> ModelReply:
+        self._check_cancel(session.state.turn_id)
         started = time.perf_counter()
         record: dict[str, Any] = {
             "step_id": _step_id(session.state),
@@ -719,6 +786,20 @@ class RunTurn:
             raise
         finally:
             record["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            record["call_observation"] = {
+                "kind": call_type,
+                "purpose": call_type,
+                "trigger": "步骤: " + str(record["step_id"]),
+                "outcome": (
+                    "调用失败: " + str(record.get("error_type"))
+                    if record["status"] == "error"
+                    else "请求工具: " + ", ".join(record.get("tool_calls") or [])
+                    if record.get("tool_calls")
+                    else "finish_reason: " + str(record.get("finish_reason") or "未记录")
+                ),
+                "source": "backend_recorded",
+                "observation_version": 1,
+            }
             session.model_calls.append(record)
 
     def _converse(self, session: _Session, record: TurnRecord) -> str:
@@ -726,6 +807,7 @@ class RunTurn:
         messages = self._initial_messages(record)
 
         while True:
+            self._check_cancel(state.turn_id)
             if not state.can_step():
                 reason = (
                     TerminationReason.TIMEOUT
@@ -788,8 +870,12 @@ class RunTurn:
                         break
                     except PromptTooLongError:
                         continue
+                    except OperationCancelled:
+                        raise
                     except Exception as retry_error:
                         return self._model_error_stop(session, retry_error)
+            except OperationCancelled:
+                raise
             except Exception as error:
                 return self._model_error_stop(session, error)
 
@@ -1215,7 +1301,15 @@ class RunTurn:
             return False
         session.judged = True
         state.model_steps += 1
-        verdict = self._judge.review(query=state.question, answer=answer, transcript=messages)
+        self._check_cancel(state.turn_id)
+        verdict = self._judge.review(
+            query=state.question,
+            answer=answer,
+            transcript=messages,
+            complete=lambda prompt: self._complete_recorded(
+                session, prompt, (), call_type="faithfulness_judge"
+            ),
+        )
         if verdict.faithful or not verdict.truth_problems:
             return False
         # 1.0 ``runtime.py:2786-2788``：判过不实就先把标记落下来。**标记在「判不实」那一刻
@@ -1306,6 +1400,7 @@ class RunTurn:
             extra={"arguments": _call_arguments(call)},
         )
         started_at = time.perf_counter()
+        self._check_cancel(state.turn_id)
         outcome = self._toolbox.execute(
             call.name,
             decision.arguments,
@@ -1446,6 +1541,8 @@ class RunTurn:
         ]
         try:
             reply = self._complete_recorded(session, messages, (), call_type="recovery")
+        except OperationCancelled:
+            raise
         except Exception:  # noqa: BLE001 —— 兜底里的兜底：它失败就落回固定文案
             log.warning("强制收尾的模型调用失败，落回确定性兜底", exc_info=True)
             return ""

@@ -17,7 +17,7 @@
 
 import type { MediaLike } from "../api/media.ts";
 import { conversationTurns } from "./evidence.ts";
-import { average, callType, callTypeLabel, fmtMs } from "./format";
+import { average, callType, callTypeLabel, finiteMetric, fmtMs } from "./format";
 
 type Dict = Record<string, unknown>;
 
@@ -198,16 +198,16 @@ export function itemLlmSummary(item: unknown): ItemLlmSummary | null {
   if (!calls.length) return null;
   const saved = dict(dict(item).llm_summary);
   const numeric = (key: string, fallback: number): number =>
-    Number.isFinite(Number(saved[key])) ? Number(saved[key]) : fallback;
+    finiteMetric(saved[key]) ?? fallback;
   const numericOrNull = (key: string, fallback: number | null): number | null =>
-    Number.isFinite(Number(saved[key])) ? Number(saved[key]) : fallback;
+    finiteMetric(saved[key]) ?? fallback;
   return {
     call_count: numeric("call_count", calls.length),
     streamed_count: numeric("streamed_count", calls.filter((call) => dict(call).streamed === true).length),
     ttft_ms_avg: numericOrNull("ttft_ms_avg", average(calls.map((call) => dict(call).ttft_ms))),
     total_ms_sum: numeric(
       "total_ms_sum",
-      calls.reduce((sum, call) => sum + (Number(dict(call).total_ms) || 0), 0),
+      calls.reduce((sum, call) => sum + (finiteMetric(dict(call).total_ms ?? dict(call).duration_ms) ?? 0), 0),
     ),
     prompt_tokens_total: numeric(
       "prompt_tokens_total",
@@ -244,10 +244,10 @@ export function noToolLabel(call: unknown): string {
 /** 1.0 `:1479-1485` —— 三个数都有限才出串，否则 `-`。 */
 export function callBudget(call: unknown): string {
   const c = dict(call);
-  const prompt = Number(c.preflight_prompt_tokens ?? c.prompt_tokens);
-  const output = Number(c.effective_max_tokens);
-  const limit = Number(c.max_model_len);
-  if (![prompt, output, limit].every(Number.isFinite)) return "-";
+  const prompt = finiteMetric(c.preflight_prompt_tokens ?? c.prompt_tokens);
+  const output = finiteMetric(c.effective_max_tokens);
+  const limit = finiteMetric(c.max_model_len);
+  if ([prompt, output, limit].some((value) => value == null)) return "-";
   return `${prompt} + ${output} / ${limit}`;
 }
 
@@ -264,6 +264,7 @@ export function callObservation(call: unknown): {
   const observation = dict(c.call_observation);
   const sources: Record<string, string> = {
     backend_recorded: "后端直接记录",
+    saved_call_facts_v1: "已存调用事实（规则 v1）",
     historical_trace_aligned: "历史执行轨迹确定性对齐",
     historical_unresolved: "历史记录信息不足",
     execution_trace_only: "失败执行轨迹",
@@ -335,8 +336,8 @@ export function normalizedToolCallIndex(item: unknown, trace: unknown, traceInde
   const executionStep = sameTurnSteps[localTraceIndex >= 0 ? localTraceIndex : traceIndex];
   const executionIndex = callIndexForStep(item, dict(executionStep).parent_step_id, traceObj.conversation_turn);
   if (executionIndex != null) return executionIndex;
-  const savedIndex = Number(traceObj.model_call_index);
-  return Number.isInteger(savedIndex) ? savedIndex : null;
+  const savedIndex = finiteMetric(traceObj.model_call_index);
+  return savedIndex != null && Number.isInteger(savedIndex) ? savedIndex : null;
 }
 
 /** 1.0 `:1539-1545` —— 绑到组内调用 `_globalCallIndex` 的同轮工具 trace。 */
@@ -357,8 +358,8 @@ export function toolsForGroupedCall(item: unknown, call: unknown): Dict[] {
 /** 1.0 `:1547-1553` —— 优先 `duration_ms`，否则 `latency_s * 1000`，都不行回 `null`。 */
 export function toolDurationMs(trace: unknown): number | null {
   const t = dict(trace);
-  const duration = Number(t.duration_ms);
-  if (Number.isFinite(duration) && duration >= 0) return duration;
+  const duration = finiteMetric(t.duration_ms);
+  if (duration != null) return duration;
   const latency = Number(t.latency_s);
   return Number.isFinite(latency) && latency >= 0 ? latency * 1000 : null;
 }
@@ -392,21 +393,21 @@ export function callAgentLoopTiming(item: unknown, call: unknown): AgentLoopTimi
   // `session.model_calls.append({... "duration_ms": ...})`）。此前只读 `total_ms`，
   // 于是每一次模型调用的耗时都是 null → `totalMs` 为 null → 整条延迟时间线是空的，
   // 而页面上「每一步骤的时间」的位置还在。`total_ms` 留着是为了兼容 1.0 的旧存档。
-  const modelMs = Number(c.total_ms ?? c.duration_ms);
-  const validModelMs = Number.isFinite(modelMs) && modelMs >= 0 ? modelMs : null;
+  const modelMs = finiteMetric(c.total_ms ?? c.duration_ms);
+  const validModelMs = modelMs != null ? modelMs : null;
   const saved = dict(c.agent_loop_timing);
   const tools = toolsForGroupedCall(item, call);
-  const toolMs = Number.isFinite(Number(saved.tool_ms))
+  const toolMs = finiteMetric(saved.tool_ms) != null
     ? Number(saved.tool_ms)
     : tools.reduce((sum, trace) => sum + (toolDurationMs(trace) || 0), 0);
-  const ttftMs = Number(c.ttft_ms);
-  const validTtftMs = Number.isFinite(ttftMs) && ttftMs >= 0 ? ttftMs : null;
-  const generationMs = Number.isFinite(Number(saved.model_generation_ms))
+  const ttftMs = finiteMetric(c.ttft_ms);
+  const validTtftMs = ttftMs != null ? ttftMs : null;
+  const generationMs = finiteMetric(saved.model_generation_ms) != null
     ? Number(saved.model_generation_ms)
-    : validModelMs == null
+    : validModelMs == null || validTtftMs == null
       ? null
-      : Math.max(0, validModelMs - (validTtftMs || 0));
-  const totalMs = Number.isFinite(Number(c.agent_loop_total_ms))
+      : Math.max(0, validModelMs - validTtftMs);
+  const totalMs = finiteMetric(c.agent_loop_total_ms) != null
     ? Number(c.agent_loop_total_ms)
     : validModelMs == null
       ? null
@@ -423,6 +424,9 @@ export function callLatencySegments(item: unknown, call: unknown): LatencySegmen
   }
   if (timing.generationMs != null && timing.generationMs > 0) {
     segments.push({ kind: "generation", label: "模型生成 / 回答", ms: timing.generationMs });
+  }
+  if (timing.ttftMs == null && timing.generationMs == null && timing.modelMs != null && timing.modelMs > 0) {
+    segments.push({ kind: "model-request", label: "模型请求墙钟（未拆 TTFT）", ms: timing.modelMs });
   }
   timing.tools.forEach((trace, index) => {
     const ms = toolDurationMs(trace);
@@ -464,11 +468,11 @@ export function itemTimingBreakdown(item: unknown): {
   // 页面上「每一步骤耗时」的位置还在，数字是 `-`。数据其实一直在
   // `model_call_metrics[].duration_ms` 与 `tool_trace[].duration_ms` 里。
   const modelFromCalls = itemCallMetrics(i)
-    .map((call) => Number(call.duration_ms))
-    .filter((value) => Number.isFinite(value));
+    .map((call) => finiteMetric(call.total_ms ?? call.duration_ms))
+    .filter((value): value is number => value != null);
   const toolFromTrace = (Array.isArray(i.tool_trace) ? i.tool_trace : [])
-    .map((trace) => Number(dict(trace).duration_ms))
-    .filter((value) => Number.isFinite(value));
+    .map((trace) => finiteMetric(dict(trace).duration_ms))
+    .filter((value): value is number => value != null);
   const modelMs =
     saved.model_ms ??
     dict(i.llm_summary).total_ms_sum ??
@@ -477,17 +481,13 @@ export function itemTimingBreakdown(item: unknown): {
     saved.tool_ms ?? (toolFromTrace.length ? toolFromTrace.reduce((sum, value) => sum + value, 0) : null);
   const wallMs = saved.wall_clock_ms ?? i.wall_clock_ms ?? null;
   const judgeMs = saved.judge_ms ?? i.judge_ms ?? null;
-  // Agent 的墙钟 = 总墙钟 − Judge。Judge 是异步跑的，1.0 也按这个口径算。
-  const agentWallMs =
-    saved.agent_wall_ms ??
-    (Number.isFinite(Number(wallMs)) && Number.isFinite(Number(judgeMs))
-      ? Math.max(0, Number(wallMs) - Number(judgeMs))
-      : null);
-  const otherMs =
-    saved.other_ms ??
-    (Number.isFinite(Number(wallMs)) && Number.isFinite(Number(agentWallMs))
-      ? Math.max(0, Number(agentWallMs) - (Number(modelMs) || 0) - (Number(toolMs) || 0))
-      : null);
+  const currentContract = finiteMetric(i.metrics_contract_version) === 2;
+  const wall = finiteMetric(wallMs), judge = finiteMetric(judgeMs);
+  const agentWallMs = finiteMetric(saved.agent_wall_ms) ?? (currentContract ? wall : (
+    wall != null && judge != null ? Math.max(0, wall - judge) : null));
+  const model = finiteMetric(modelMs), tool = finiteMetric(toolMs);
+  const otherMs = finiteMetric(saved.other_ms) ?? (
+    agentWallMs != null && model != null && tool != null ? Math.max(0, agentWallMs - model - tool) : null);
   return {
     wall_clock_ms: wallMs,
     agent_wall_ms: agentWallMs,

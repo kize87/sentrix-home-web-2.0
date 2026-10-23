@@ -273,19 +273,19 @@ def test_a_probe_failure_never_reports_a_zero_memory(monkeypatch: pytest.MonkeyP
     """探不到进程时**撤掉**内存读数并写明原因——0 是一个合法的测量值，不是「没读到」。"""
     provider = LocalJetsonLlamaCppTelemetryProvider(endpoint_url="http://127.0.0.1:8100")
 
-    def missing() -> int:
-        raise ValueError("no llama-server is listening on port 8100")
+    from photobench.infrastructure.runtime import jetson_telemetry as jetson
 
-    monkeypatch.setattr(provider, "_pid", missing)
+    monkeypatch.setattr(jetson, "_host_process_rows", lambda *_args: [])
     monkeypatch.setattr(provider, "_device", lambda: {})
     result = provider.gpu_stats()
     assert result["status"] == "available"
-    # 进程内存不在 gpu_stats 的信封里（那一条只给「设备读数 + 一行 gpus」），
-    # 它在 process_memory() 那份里。这里直接读提供者留下的那份内部读数——
-    # 走 process_memory() 会真的去扫 /proc，而这条用例要断的是「探不到时写了什么」。
-    data = provider._last_memory["data"]  # type: ignore[attr-defined]
-    assert "process_memory_used_mib" not in data
-    assert data["pss_error"]
+    # Device reads no longer perform a second PID discovery. Verify the public
+    # process envelope independently: unknown allocation must remain unavailable.
+    memory = provider.process_memory()
+    data = memory["data"]
+    assert data["process_memory_used_mib"] is None
+    assert data["model_process_system_memory_used_mib"] is None
+    assert data["memory_observations"]["topology"]["status"] != "available"
 
 
 def test_the_sample_row_shape_is_what_the_aggregator_branches_on():

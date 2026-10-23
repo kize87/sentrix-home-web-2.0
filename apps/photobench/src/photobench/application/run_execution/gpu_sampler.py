@@ -39,7 +39,7 @@ from typing import Any
 
 from photobench.domain.runs.analysis import aggregate_gpu_samples, validated_telemetry_sample
 from photobench.domain.runtime.metrics import finite_number
-from photobench.domain.runtime.ports import TelemetryProvider
+from photobench.domain.runtime.ports import OwnedTelemetryWork, TelemetryProvider
 
 #: 采样行会带上相位标签，读侧就不必去 run.json 里反查「这条样本属于哪一段」。
 #: 1.0 ``_persist_gpu_sample``（``:2113``）的那张表，逐字照搬（含中文标签）。
@@ -131,6 +131,12 @@ class GpuSampler:
             thread.name for thread in (self._thread, self._publisher) if thread and thread.is_alive()
         ]
 
+    def pending_work(self) -> list[str]:
+        threads = [thread.name for thread in (self._thread, self._publisher) if thread and thread.is_alive()]
+        if isinstance(self.provider, OwnedTelemetryWork):
+            threads.extend(self.provider.pending_work())
+        return threads
+
     def sample_once(self, *, scheduled_at: float | None = None) -> None:
         """采一个点。
 
@@ -180,6 +186,8 @@ class GpuSampler:
         system_memory = (
             (system_result.get("data") or {}) if system_result.get("status") == "available" else {}
         )
+        timing["process_probe_seconds"] = process_memory.get("process_probe_seconds")
+        timing["process_probe_pending"] = process_memory.get("process_probe_pending")
         timestamp = time.monotonic()
         timing.update(
             finished_at_monotonic=timestamp,
@@ -342,7 +350,7 @@ class GpuSampler:
             "last_publisher_failure": self._last_publisher_failure,
             "collection_failures": self._collection_failures,
             "last_collection_failure": self._last_collection_failure,
-            "stop_pending_threads": list(self._stop_pending),
+            "stop_pending_threads": self.pending_work() if self._stop.is_set() else list(self._stop_pending),
             "missed_intervals": self._missed_intervals,
         }
         return result

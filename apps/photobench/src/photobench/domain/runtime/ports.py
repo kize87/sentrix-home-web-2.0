@@ -132,3 +132,12 @@ class RuntimeProviders:
     lifecycle: LifecycleProvider
     telemetry: TelemetryProvider
     source: str = ""
+
+
+@runtime_checkable
+class OwnedTelemetryWork(Protocol):
+    """Optional diagnostic capability; the four TelemetryProvider methods remain unchanged."""
+
+    def pending_work(self) -> list[str]:
+        """Return live owned probe identifiers, not a stale stop snapshot."""
+        ...

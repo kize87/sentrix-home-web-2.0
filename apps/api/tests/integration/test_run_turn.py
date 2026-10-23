@@ -1633,3 +1633,25 @@ def test_the_fallback_text_is_never_used_when_the_model_said_anything(env):
 
     assert "这一轮检索到" not in result.answer
     assert "提前结束" not in result.answer
+
+
+def test_owned_turn_cancel_before_model_call_has_real_cancelled_terminal(env):
+    from sentrix.infrastructure.media.operations import InProcessOperationControl
+
+    conversations, turns, conversation, _ = env
+    control = InProcessOperationControl()
+    model = ScriptedModel([final("should not run")])
+    run_turn = RunTurn(
+        model=model,
+        conversations=conversations,
+        turns=turns,
+        toolbox=StubToolbox(),
+        operation_control=control,
+    )
+    turn_id = start(run_turn, conversation)
+    control.request_cancel("turn:" + turn_id)
+    result = run_turn.run(turn_id)
+    assert result.termination_reason == "cancelled"
+    assert result.answer == ""
+    assert not model.calls and not model.planner_calls
+    assert turns.get(turn_id).status == TurnStatus.CANCELLED

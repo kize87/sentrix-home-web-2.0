@@ -68,8 +68,6 @@ export function QaResults({
   resultRef,
   reviewFor,
   onReviewChange,
-  reviewSaving = false,
-  onSaveReviews,
   onOpenMedia,
 }: QaResultsProps) {
   const activeRejudge = activeRun?.rejudge ?? null;
@@ -237,14 +235,7 @@ export function QaResults({
           <button className="btn ghost compact" type="button" onClick={() => void resetQaFilters()}>
             重置
           </button>
-          <button
-            className="btn ghost compact"
-            type="button"
-            disabled={reviewSaving || ["running", "pending"].includes(activeRun?.status ?? "")}
-            onClick={onSaveReviews}
-          >
-            {reviewSaving ? "保存中…" : "保存人工复核"}
-          </button>
+
         </form>
         {activeRejudge?.status === "running" && !visibleQaItems.length && (
           <div className="qa-results-empty">正在等待本轮第一条 Judge 评分结果…</div>

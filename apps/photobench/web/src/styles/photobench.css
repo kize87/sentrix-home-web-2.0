@@ -696,16 +696,16 @@ label,.field-label { display:block; min-width:0; color:var(--muted); font-size:1
 .debug-step > summary { background:#f8fafc; color:#475269; font-size:9px; }
 .debug-step > summary strong { min-width:0; flex:1; color:#273248; font-size:10px; }
 .debug-step > summary::before { width:6px; height:6px; border:0; border-radius:50%; background:#aab3c4; }
-.debug-step-model { border-left-color:#5b7cfa; }
-.debug-step-model > summary::before { background:#5b7cfa; }
-.debug-step-tool { border-left-color:#16a06b; }
-.debug-step-tool > summary::before { background:#16a06b; }
-.debug-step-judge { border-left-color:#d98b16; }
-.debug-step-judge > summary::before { background:#d98b16; }
-.debug-step-planner { border-left-color:#8b5cf6; }
-.debug-step-planner > summary::before { background:#8b5cf6; }
-.debug-step-guard { border-left-color:#64748b; }
-.debug-step-guard > summary::before { background:#64748b; }
+.debug-kind-model { border-left-color:#5b7cfa; }
+.debug-kind-model > summary::before { background:#5b7cfa; }
+.debug-kind-tool { border-left-color:#16a06b; }
+.debug-kind-tool > summary::before { background:#16a06b; }
+.debug-kind-judge { border-left-color:#d98b16; }
+.debug-kind-judge > summary::before { background:#d98b16; }
+.debug-kind-planner { border-left-color:#8b5cf6; }
+.debug-kind-planner > summary::before { background:#8b5cf6; }
+.debug-kind-guard { border-left-color:#64748b; }
+.debug-kind-guard > summary::before { background:#64748b; }
 .debug-step-index { flex:none; min-width:16px; color:#69738a; text-align:center; font-size:9px; font-weight:700; }
 .debug-step-status { flex:none; padding:2px 6px; border-radius:999px; color:#667085; background:#eef0f5; font-size:8px; }
 .debug-step > div { padding:7px 8px 8px; border-top:1px solid #edf0f5; }
@@ -960,3 +960,18 @@ details.qa-results-body[open] > summary::before { content:"▾ "; }
 .config-group-model-advanced { background:#fff; }
 .config-group-model-advanced .model-manager-empty { grid-column:auto; grid-row:auto; }
 .config-group-model-advanced .config-model-manager { margin-top:2px; }
+
+/* Runtime trace shares compact neutral cards; status badges never style a whole row. */
+.debug-kind-status { border-left-color:#94a3b8; }
+.debug-kind-plan { border-left-color:#8b5cf6; }
+.debug-kind-model_action { border-left-color:#5b7cfa; }
+.debug-kind-tool_result { border-left-color:#16a06b; }
+.debug-step-content { display:grid; gap:8px; }
+.debug-field { min-width:0; }
+.debug-field h5 { margin:0 0 5px; color:#69738a; font-size:11px; font-weight:600; }
+.debug-field pre { max-height:320px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.debug-event-text { margin:0; color:#475269; font-size:12px; line-height:1.6; }
+.debug-trace-node > summary strong, .debug-step > summary strong, .debug-turn > summary strong { font-size:12px; }
+.debug-trace-node > summary span, .debug-turn-meta, .debug-step-status { font-size:11px; }
+.debug-step > summary { min-height:36px; }
+.operation-status { margin:8px 0; padding:10px 12px; border:1px solid #dce3ef; border-radius:8px; background:#f7f9fc; color:#475269; font-size:12px; }

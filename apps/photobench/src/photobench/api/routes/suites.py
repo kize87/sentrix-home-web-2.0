@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request
 from starlette.concurrency import run_in_threadpool
 
 from photobench.api.deps import get_container, json_body
+from photobench.api.metrics_schema import WorkStatusResponse
 
 router = APIRouter(tags=["suites"])
 
@@ -88,3 +89,15 @@ def resume_run(request: Request, run_id: str) -> dict[str, Any]:
     一起消失了——续跑与复用本就是同一件事的两种题目集。
     """
     return get_container(request).run_suites.resume_run(run_id)
+
+
+@router.get("/active-work", response_model=WorkStatusResponse, response_model_exclude_none=True)
+def active_work(request: Request) -> dict[str, Any]:
+    """Live run/auxiliary ownership; cancellation acknowledgement is not worker exit."""
+    return get_container(request).run_suites.work_status()
+
+
+@router.post("/active-work/cleanup", response_model=WorkStatusResponse, response_model_exclude_none=True)
+def refresh_cleanup(request: Request) -> dict[str, Any]:
+    """Bounded recheck of previously requested cancellation, preserving failed evidence."""
+    return get_container(request).run_suites.refresh_cleanup()

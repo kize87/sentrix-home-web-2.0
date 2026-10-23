@@ -334,6 +334,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/active-work:
+    get:
+      tags:
+      - suites
+      summary: Active Work
+      description: Live run/auxiliary ownership; cancellation acknowledgement is not
+        worker exit.
+      operationId: active_work_api_v1_active_work_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkStatusResponse'
+  /api/v1/active-work/cleanup:
+    post:
+      tags:
+      - suites
+      summary: Refresh Cleanup
+      description: Bounded recheck of previously requested cancellation, preserving
+        failed evidence.
+      operationId: refresh_cleanup_api_v1_active_work_cleanup_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkStatusResponse'
   /api/v1/runs/{run_id}/items:
     get:
       tags:
@@ -1411,6 +1441,12 @@ components:
             type: object
           - type: 'null'
           title: Persistence
+        cleanup:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Cleanup
         metrics_contract_version:
           anyOf:
           - type: integer
@@ -1573,3 +1609,26 @@ components:
       - msg
       - type
       title: ValidationError
+    WorkStatusResponse:
+      properties:
+        work:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Work
+        cleanup_status:
+          type: string
+          title: Cleanup Status
+        errors:
+          anyOf:
+          - additionalProperties:
+              type: string
+            type: object
+          - type: 'null'
+          title: Errors
+      type: object
+      required:
+      - work
+      - cleanup_status
+      title: WorkStatusResponse

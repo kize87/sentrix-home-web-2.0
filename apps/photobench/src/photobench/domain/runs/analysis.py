@@ -583,6 +583,25 @@ def annotate_model_calls(model_calls: Sequence[Any], execution_trace: Sequence[A
     if all(call.get("call_observation") for call in calls):
         return calls
     if any(call.get("call_type") for call in calls):
+        for call in calls:
+            if call.get("call_observation"):
+                continue
+            tools = call.get("tool_calls") or []
+            outcome = (
+                "调用失败: " + str(call.get("error_type") or call.get("status"))
+                if call.get("status") in {"error", "failed"}
+                else "请求工具: " + ", ".join(str(value) for value in tools)
+                if tools
+                else "finish_reason: " + str(call.get("finish_reason") or "未记录")
+            )
+            call["call_observation"] = {
+                "kind": call.get("call_type"),
+                "purpose": "已保存的调用类型: " + str(call.get("call_type") or "未记录"),
+                "trigger": "步骤: " + str(call.get("step_id") or "未记录"),
+                "outcome": outcome,
+                "source": "saved_call_facts_v1",
+                "derivation_version": 1,
+            }
         return calls
     trace = [step for step in execution_trace if isinstance(step, dict)]
     if not trace:
@@ -1648,6 +1667,7 @@ def run_list_entry(state: dict[str, Any]) -> dict[str, Any]:
             "telemetry_source",
             "runtime_framework",
             "persistence",
+            "cleanup",
         )
         if state.get(key) is not None
     }

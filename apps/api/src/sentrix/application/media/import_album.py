@@ -48,6 +48,7 @@ from sentrix.application.media.import_assets import (
     PreparedImage,
     StagedImport,
 )
+from sentrix.domain.media.progress import OperationCancelled
 
 log = logging.getLogger("sentrix.media.import_album")
 
@@ -118,7 +119,9 @@ class ImportAlbum:
         summarize_event: Callable[[str], object] | None = None,
         workers: int = DEFAULT_ALBUM_WORKERS,
         progress: Callable[..., None] | None = None,
+        cancel_check: Callable[[], None] | None = None,
     ) -> None:
+        self._cancel_check = cancel_check
         self._progress = progress
         self._importer = importer
         self._workers = max(1, int(workers))
@@ -158,12 +161,16 @@ class ImportAlbum:
                 # 任务数——去重命中的那些不进池，按任务数算会让整册都是去重时一次把
                 # 全部文件读进内存。
                 while next_submit < len(paths) and next_submit - next_finish < self._workers:
+                    if self._cancel_check is not None:
+                        self._cancel_check()
                     index = next_submit
                     next_submit += 1
                     self._report(stage="media_staging", current_file=paths[index].name)
                     stage_started = time.perf_counter()
                     try:
                         outcome = self._importer.stage(self._request_for(request, paths[index]))
+                    except OperationCancelled:
+                        raise
                     except Exception as error:  # 一张失败不中断整批——整册导入是几小时的事
                         staged[index] = None
                         failures[index] = AlbumFailure(
@@ -213,6 +220,8 @@ class ImportAlbum:
                         assert prepared is not None
                         self._report(stage="event_assignment")
                         result = self._importer.finish(ready, prepared)
+                except OperationCancelled:
+                    raise
                 except Exception as error:
                     failures[index] = AlbumFailure(
                         file_name=paths[index].name, reason=f"{type(error).__name__}: {error}"
@@ -273,6 +282,8 @@ class ImportAlbum:
         )
 
     def _report(self, **changes: Any) -> None:
+        if self._cancel_check is not None:
+            self._cancel_check()
         if self._progress is not None:
             self._progress(**changes)
 
@@ -297,7 +308,11 @@ class ImportAlbum:
         summarized = 0
         for event_id in event_ids:
             try:
+                if self._cancel_check is not None:
+                    self._cancel_check()
                 self._summarize_event(event_id)
+            except OperationCancelled:
+                raise
             except Exception as error:  # noqa: BLE001 - 一个事件总结失败不该让整个相册归零
                 log.warning("事件总结失败，事件保留占位内容: %s: %s", event_id, error)
                 continue
