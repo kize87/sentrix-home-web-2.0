@@ -501,6 +501,12 @@ def test_scoped_process_inventory_reads_details_only_for_listeners_and_new_child
         directory.mkdir(exist_ok=True)
         fields = ["S", str(parent)] + ["0"] * 17 + [ticks]
         (directory / "stat").write_text(f"{pid} (name with spaces) " + " ".join(fields))
+        task = directory / "task" / str(pid)
+        task.mkdir(parents=True, exist_ok=True)
+        (task / "children").write_text("")
+        if parent:
+            children = proc / str(parent) / "task" / str(parent) / "children"
+            children.write_text(children.read_text() + f" {pid}")
 
     for pid, parent in ((1, 0), (2, 1), (3, 2), (8, 0)):
         write_stat(pid, parent)
@@ -520,15 +526,34 @@ def test_scoped_process_inventory_reads_details_only_for_listeners_and_new_child
         "_listening_ports_by_pid",
         lambda ports: {1: {"8104"}, 8: {"8106"}} if not ports else {1: {"8104"}},
     )
+    identity_reads = []
+    identity = jetson._process_identity
+
+    def read_identity(pid):
+        identity_reads.append(pid)
+        return identity(pid)
+
+    monkeypatch.setattr(jetson, "_process_identity", read_identity)
     reads = []
     monkeypatch.setattr(jetson, "_process_rss_mib", lambda pid: reads.append(pid) or 10.0)
     monkeypatch.setattr(jetson, "_process_cmdline", lambda pid: "/usr/bin/llama-server --port 8104")
     rows = jetson._host_process_rows({"8104"})
     assert {r["pid"] for r in rows} == {1, 2, 3}
     assert set(reads) == {1, 2, 3}, "unrelated same-name models must not incur RSS/command probes"
+    assert 8 not in identity_reads, "port scope must not scan unrelated process stat files"
+    # Only a secondary thread owns this child; main-thread-only discovery loses it.
+    worker_thread = proc / "1/task/99"
+    worker_thread.mkdir()
+    write_stat(5, 0)
+    (proc / "5/stat").write_text((proc / "5/stat").read_text().replace("S 0", "S 1"))
+    (worker_thread / "children").write_text("5")
+    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 5}
     write_stat(4, 1)
-    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 4}
-    assert {r["pid"] for r in jetson._host_process_rows()} == {1, 2, 3, 4, 8}
+    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 4, 5}
+    assert {r["pid"] for r in jetson._host_process_rows()} == {1, 2, 3, 4, 5, 8}
+    # An unreadable children file must trigger full ancestry discovery.
+    (worker_thread / "children").unlink()
+    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 4, 5}
 
     def reuse(pid):
         if pid == 2:

@@ -386,21 +386,59 @@ def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, s
     return result
 
 
-def _host_process_rows(target_ports: set[str] | None = None) -> list[dict[str, Any]]:
-    # A single stat per PID supplies the ancestry graph. Read RSS/cmdline only
-    # for selected listeners and their current descendants, never every daemon.
+def _process_identity(pid: int) -> tuple[str, int]:
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return fields[19], int(fields[1])
+
+
+def _listener_tree_identities(roots: set[int]) -> dict[int, tuple[str, int]]:
+    """Follow every thread's children; a worker may fork outside the main thread."""
     identities: dict[int, tuple[str, int]] = {}
-    for proc in Path("/proc").iterdir():
-        if not proc.name.isdecimal():
+    pending = list(roots)
+    while pending:
+        pid = pending.pop()
+        if pid in identities:
             continue
+        before = _process_identity(pid)
+        identities[pid] = before
+        for task in Path(f"/proc/{pid}/task").iterdir():
+            for child in (task / "children").read_text().split():
+                child_pid = int(child)
+                # A child that vanished or was reparented races discovery. Let
+                # the full snapshot retry rather than silently omit its RAM.
+                if _process_identity(child_pid)[1] != pid:
+                    raise ValueError("process ancestry changed during discovery")
+                pending.append(child_pid)
+        if before != _process_identity(pid):
+            raise ValueError("process identity changed during discovery")
+    return identities
+
+
+def _host_process_rows(target_ports: set[str] | None = None) -> list[dict[str, Any]]:
+    identities: dict[int, tuple[str, int]] | None = None
+    ports_by_pid: dict[int, set[str]] = {}
+    if target_ports:
+        ports_by_pid = _listening_ports_by_pid(target_ports)
         try:
-            fields = (proc / "stat").read_text().rsplit(")", 1)[1].split()
-            identities[int(proc.name)] = (fields[19], int(fields[1]))
+            identities = _listener_tree_identities(set(ports_by_pid))
+            # Resolve again after taking identities, so a reused listener PID
+            # cannot inherit the previous process's port ownership.
+            if ports_by_pid != _listening_ports_by_pid(target_ports):
+                identities = None
         except (OSError, ValueError, IndexError):
-            continue
-    # Resolve sockets after the identity snapshot: a PID reused during discovery
-    # cannot inherit old ownership and still pass the final start-tick check.
-    ports_by_pid = _listening_ports_by_pid(target_ports)
+            # children is unavailable on some kernels / restricted proc mounts.
+            # Preserve complete legacy discovery instead of dropping workers.
+            identities = None
+    if identities is None:
+        identities = {}
+        for proc in Path("/proc").iterdir():
+            if not proc.name.isdecimal():
+                continue
+            try:
+                identities[int(proc.name)] = _process_identity(int(proc.name))
+            except (OSError, ValueError, IndexError):
+                continue
+        ports_by_pid = _listening_ports_by_pid(target_ports)
     selected = set(ports_by_pid) if target_ports else set(identities)
     while True:
         expanded = selected | {pid for pid, (_, parent) in identities.items() if parent in selected}
