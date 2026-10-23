@@ -585,7 +585,11 @@ def _augment_local_process_memory(
             )
             for row in selected_rows
         }
-        ready = probe.collect(readers, budget=max(0.0, 0.6 - (time.monotonic() - started)))
+        # On AGX, a real smaps_rollup walk during visual inference can exceed
+        # 0.6s. Allow the current reads to finish within a bounded 1.5s window,
+        # still below the unchanged 3s source TTL/coverage requirement. Do not
+        # substitute a prior memory value when a read exceeds this deadline.
+        ready = probe.collect(readers, budget=max(0.0, 1.5 - (time.monotonic() - started)))
     for row in selected_rows:
         pid = int(row["pid"])
         observed = time.monotonic()

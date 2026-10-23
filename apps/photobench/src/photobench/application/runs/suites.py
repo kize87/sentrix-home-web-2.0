@@ -356,6 +356,11 @@ class RunSuites:
         thread = threading.Thread(target=_run_sequentially, name=f"suite-{suite_id}", daemon=True)
         with self._lock:
             self._threads[suite_id] = thread
+            # Each run is owned by the sequential suite worker. Status and
+            # cleanup look up run IDs, so retain the same thread under those
+            # IDs as well; otherwise a live import appears safe to clean up.
+            for run_id in created:
+                self._threads[run_id] = thread
         thread.start()
         return {
             "suite_id": suite_id,

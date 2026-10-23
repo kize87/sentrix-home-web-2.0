@@ -354,6 +354,37 @@ def test_slow_topology_has_one_job_and_cannot_starve_memory_or_refresh_old_facts
         gate.set()
 
 
+def test_visual_load_smaps_finishes_within_bounded_window(monkeypatch):
+    import time
+
+    from photobench.domain.runtime.metrics import memory_freshness
+    from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
+
+    row = {"pid": 42, "start_ticks": "42", "rss_mib": 20, "listening_ports": [8100]}
+    monkeypatch.setattr(jetson, "_host_process_rows", lambda ports: [row])
+    monkeypatch.setattr(jetson, "_process_start_ticks", lambda pid: "42")
+
+    def smaps(pid):
+        time.sleep(0.75)
+        return 8, 10
+
+    monkeypatch.setattr(jetson, "_process_smaps_memory_mib", smaps)
+    monkeypatch.setattr(jetson, "_nvmap_cache", {"at": float("-inf"), "table": None})
+    monkeypatch.setattr(jetson, "_read_nvmap_clients", lambda: "llama 0 42 10240K\n")
+    start = time.monotonic()
+    data = jetson._augment_local_process_memory(
+        {},
+        model_pid=None,
+        endpoint_port="8100",
+        telemetry_services={"main_model": {"ports": [8100]}},
+        probe=BoundedProbe(limit=4),
+    )
+    assert 0.7 <= time.monotonic() - start < 2
+    normalized, _ = memory_freshness({**data, "_t": time.monotonic()})
+    assert normalized["memory_complete"] is True
+    assert normalized["model_process_host_memory_mib"] == 10
+
+
 def test_probe_budget_stops_additional_smaps_and_does_not_claim_complete_memory(monkeypatch):
     clock, walks = [100.0], []
     monkeypatch.setattr(jetson.time, "monotonic", lambda: clock[0])

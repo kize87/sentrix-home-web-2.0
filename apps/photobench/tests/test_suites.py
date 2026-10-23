@@ -293,6 +293,40 @@ def test_start_suite_registers_the_run_and_returns_its_id(tmp_path: Path):
 # ---- 取消 -----------------------------------------------------------------
 
 
+def test_suite_worker_ownership_prevents_cleanup_while_execution_is_live(tmp_path):
+    from photobench.application.run_execution.service import RunExecution
+
+    gate, entered = threading.Event(), threading.Event()
+    refreshed = []
+
+    class ControlledExecution(RunExecution):
+        def __init__(self, request):
+            self._state = _State({"run_id": request.run_id, "status": "running"})
+
+        def execute(self, request):
+            entered.set()
+            assert gate.wait(5)
+            self._state.set("status", "completed")
+            return self._state.data
+
+        def refresh_cleanup(self):
+            refreshed.append(1)
+            return False
+
+    suites = _suites(tmp_path, new_execution=ControlledExecution)
+    try:
+        ids = suites.start_suite(_payload(models=["a", "b"]))["run_ids"]
+        assert entered.wait(3)
+        work = suites.work_status()["work"]
+        assert {w["id"] for w in work} == set(ids)
+        assert all(w["worker_alive"] for w in work)
+        assert suites.refresh_cleanup()["errors"] == {}
+        assert refreshed == []
+    finally:
+        gate.set()
+    assert _wait_until(lambda: suites.work_status()["cleanup_status"] == "stopped")
+
+
 def test_cancel_run_cancels_a_running_run_and_the_chain_sees_it(tmp_path: Path):
     """取消是**两个动作**：置信号（主链下一次检查就抛 ``RunCancelledError``）+ 回收模型。
 
