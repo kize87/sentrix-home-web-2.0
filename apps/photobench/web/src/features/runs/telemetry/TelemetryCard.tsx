@@ -126,7 +126,9 @@ function buildTelemetryOption(run: Run | null | undefined, history: Dict[]): ECh
     history.some((item) => seriesValue(item, definition) != null),
   );
   const firstTimestamp = Number(history[0]?.t);
+  const snapshotsOnly = (telemetryLiveState(run).history?.length ?? 0) < 2;
   const labels = history.map((item, index) => {
+    if (snapshotsOnly) return `#${index + 1}`;
     const elapsed = Number(item?.t) - firstTimestamp;
     return Number.isFinite(elapsed) ? `+${(elapsed / 60).toFixed(1)} min` : `#${index + 1}`;
   });
@@ -248,6 +250,7 @@ export function TelemetryCard({ run }: TelemetryCardProps) {
   const phaseRows = liveTelemetryPhaseRows(run);
   const processes = telemetryProcessList(run);
   const chartData = useMemo(() => telemetryChart(run), [run]);
+  const hasSampleHistory = Array.isArray(live.history) && live.history.length >= 2;
   // 轮询会每 2 秒换一个 run 对象，但历史点可能没变。比较实际历史内容，
   // 让相同时间点的null/数值修正同样触发重画。否则 notMerge 会重建图表，鼠标悬浮的 tooltip
   // 会在下一次轮询时被清掉（158 上 active_count 被孤儿 run 占住时尤其明显）。
@@ -337,7 +340,17 @@ export function TelemetryCard({ run }: TelemetryCardProps) {
         <div className="telemetry-chart">
           <div ref={canvasRef} className="telemetry-chart-canvas" role="img" aria-label="资源占用趋势"></div>
           <small className="muted">
-            完整测评过程，共 {sampleCount} 个采样点；曲线按全时段抽稀绘制，峰值来自全部采样。悬浮查看时间、阶段和各项
+            {!hasSampleHistory ? (
+              <>阶段快照示意，共 {chartData.history.length} 个快照；横轴仅为快照序号，不表示真实耗时。</>
+            ) : run?.history_mode === "checkpoint" ? (
+              <>最近保存的遥测窗口，当前绘制 {chartData.history.length} 个点；整轮已采集 {sampleCount} 个采样点。
+                横轴从该窗口首点开始计时；可在上方点击“读取整轮遥测曲线”查看早期数据。</>
+            ) : run?.history_mode === "full" ? (
+              <>完整测评过程，共 {sampleCount} 个采样点；曲线按全时段抽稀为 {chartData.history.length} 个点，峰值来自全部采样。</>
+            ) : (
+              <>当前绘制 {chartData.history.length} 个点，曲线范围未记录；横轴从当前曲线首点开始计时。</>
+            )}
+            悬浮查看时间、阶段和各项
             GiB，图例可隐藏曲线，底部可缩放。曲线只绘制实际采集到的数据，不用 0 填充缺失指标。
           </small>
         </div>

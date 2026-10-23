@@ -53,6 +53,52 @@ function emptyRun(): Run {
 }
 
 describe("TelemetryCard · echarts 生命周期（1.0 :1027-1125 / :2824-2837）", () => {
+  it("检查点窗口不能标成完整测评过程，明确曲线点数和时间起点", () => {
+    const initial = run();
+    const { container } = render(<TelemetryCard run={run({
+      history_mode: "checkpoint",
+      telemetry_live: { ...initial.telemetry_live, samples_count: 1011 },
+    })} />);
+    const caption = container.querySelector(".telemetry-chart small")?.textContent;
+    expect(caption).toContain("最近保存的遥测窗口");
+    expect(caption).toContain("当前绘制 3 个点");
+    expect(caption).toContain("整轮已采集 1011 个采样点");
+    expect(caption).toContain("横轴从该窗口首点开始计时");
+    expect(caption).not.toMatch(/完整测评过程|全时段抽稀/);
+  });
+
+  it("显式加载整轮后才标全时段，分开总采样数与绘图点数", () => {
+    const initial = run();
+    const { container } = render(<TelemetryCard run={run({
+      history_mode: "full",
+      telemetry_live: { ...initial.telemetry_live, samples_count: 1011 },
+    })} />);
+    const caption = container.querySelector(".telemetry-chart small")?.textContent;
+    expect(caption).toContain("完整测评过程，共 1011 个采样点");
+    expect(caption).toContain("曲线按全时段抽稀为 3 个点");
+  });
+
+  it("旧记录未标曲线范围时不推断成全轮", () => {
+    const { container } = render(<TelemetryCard run={run()} />);
+    const caption = container.querySelector(".telemetry-chart small")?.textContent;
+    expect(caption).toContain("曲线范围未记录");
+    expect(caption).not.toMatch(/完整测评过程|全时段抽稀/);
+  });
+
+  it("阶段快照回退不是完整采样曲线，即使读取模式为 full", () => {
+    const { container } = render(<TelemetryCard run={run({
+      history_mode: "full",
+      telemetry_live: { samples_count: 10, history: [], phase_snapshots: {
+        photo_import: { latest: { system_memory_used_mib: 2048 } },
+        qa_eval: { latest: { system_memory_used_mib: 3072 } },
+      } },
+    })} />);
+    const caption = container.querySelector(".telemetry-chart small")?.textContent;
+    expect(caption).toContain("阶段快照示意");
+    expect(caption).not.toMatch(/完整测评过程|全时段抽稀/);
+    expect(echartsMock.instance.setOption.mock.calls[0]?.[0].xAxis.data).toEqual(["#1", "#2"]);
+  });
+
   it("缺失内存保持曲线缺口，不转零或连接缺口", () => {
     render(<TelemetryCard run={run({ telemetry_live: {
       source: "host_nvidia_smi", samples_count: 3,
