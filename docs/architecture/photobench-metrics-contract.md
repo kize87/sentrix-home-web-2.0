@@ -166,3 +166,15 @@ Agent和Judge仍使用独立线程池，协调器等待任一池完成即提交�
 ## T006 2026-10-23 调用事实与清理状态
 
 详细契约及测试边界见[取消、调用事实与采样优化](../refactor/2026-10-23-cancellation-trace-deviations.md)。domain端口、application编排、infrastructure探测及bootstrap装配分层不变；产品同步导入配合协作取消，不引入持久队列。停止全部只请求测评相关任务停止，pending与worker真正退出分开。原始历史、null、TTL和3秒覆盖门槛保持；新运行的L2调用事实纳入真实模型调用统计，旧记录不补造。四机更新前重新核验占用，只激活授权8291/8872。受影响设备真实回归须使用新SHA，不能复用旧run标成新版。
+
+## T006 2026-10-24 运行终态汇总规则
+
+运行总状态沿用八种：pending、running、cancelling、completed、completed_with_errors、failed、cancelled、interrupted。阶段已有done/partial等状态保持，不增加细分类状态。domain.runs.execution.qa_completion_errors集中验证完成事实，application在Agent/Judge池回收后调用；不在API、前端或基础设施决定业务终态。TelemetryProvider、装配点、模型调用及外部schema均不变。
+
+- 必需流程结束、每个QA具有唯一且匹配的终态记录，应评样本具有合法有效分数，且没有最终Agent/Judge失败：completed。合法0分、低质量、合理澄清/拒答以及已恢复的中间错误不单独导致失败。
+- 部分样本Agent失败/超时、Judge最终失败（包括任务/证据子评分或既有多轮记录中的明确失败）或应有回答质量评分缺失：qa_eval=partial；总状态completed_with_errors。阶段failed_count统计失败样本，一题只计一次；error_details沿用既有sample_id/status/error_type/reason，Agent和Judge原因分列。不补0，不减少总样本分母，不为等满分子重复入队。
+- 缺失/重复/意外QA ID、缺少Agent终态属于结果完整性缺陷，抛出错误使该阶段及总状态failed。原始异常记录保留。显式取消优先走RunCancelledError/cancelled，尚未开始题仍scheduled，不能误记为失败或已完成。
+- 未配置Judge时评分不适用，不因占位分数缺失判错误；build不执行此QA规则。重试仍有界，以最终结果判断；历史attempts中的已恢复错误不计最终失败。run_valid不作为新验收结论；在QA收尾前先清除旧成功标志，完整性/最终评分错误时保持false，避免原始记录留下成功值。既有质量/召回/遥测公式及采样门槛不变。
+- 只影响新版新执行及resume生成的新run；既有run原始状态和SHA不改写。重判仍保留独立操作记录，不反改原运行当时的状态。列表xx/yy继续使用有效回答质量评分样本数/本轮样本数，因此可出现completed_with_errors与9/10，也可在子评分失败时显示10/10。
+
+本地验证包含先失败复现、domain完整性/计分边界、完整执行正常收尾/落盘/列表投影、取消及前端停止轮询；完整make ci固定提交后执行。发布只在无受管工作设备激活8291/8872，忙机仅暂存；共用执行逻辑的新版真机回归另行记录，不以本地假产品用例或旧run替代。

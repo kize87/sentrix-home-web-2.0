@@ -1248,3 +1248,8 @@ Judge一致性v3进一步限定为明确“模型/助手的回答/答案/结论�
 ## T006 2026-10-23 协作取消与遥测探测
 
 详细契约及测试边界见[取消、调用事实与采样优化](../refactor/2026-10-23-cancellation-trace-deviations.md)。domain端口、application编排、infrastructure探测及bootstrap装配分层不变；产品同步导入配合协作取消，不引入持久队列。停止全部只请求测评相关任务停止，pending与worker真正退出分开。原始历史、null、TTL和3秒覆盖门槛保持；新运行的L2调用事实纳入真实模型调用统计，旧记录不补造。四机更新前重新核验占用，只激活授权8291/8872。受影响设备真实回归须使用新SHA，不能复用旧run标成新版。
+
+
+### T006 2026-10-24 终态汇总修复
+
+八种运行总状态和端口/schema保持不变；QA/Judge最终失败及缺分统一由domain.runs.execution.qa_completion_errors判断，application负责取消优先、池回收与done/partial/failed发布；详情见[运行终态汇总规则](photobench-metrics-contract.md#t006-2026-10-24-运行终态汇总规则)。不将历史attempt错误当最终失败，不重写历史run，不影响产品层。

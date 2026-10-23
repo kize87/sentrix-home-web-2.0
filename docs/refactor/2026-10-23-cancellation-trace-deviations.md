@@ -28,3 +28,9 @@ PhotoBench保留POST /cancel-active的cancelled/skipped/total兼容字段，新�
 工作线程启动失败会记录真实失败终态并释放操作登记；导入取消注册竞态最多重试6次，不自动重放POST。历史scope仅依据保存的run.scope_id投影，并标saved_run_scope_v1。
 
 内存画像轮询断连/超时同样请求产品取消；不以turn终态替代worker退出确认，清理pending时中止后续重放并保留失败原因。
+
+## T006 2026-10-24 运行终态汇总规则
+
+沿用八种运行总状态。新版在全部Agent/Judge收尾后，将最终执行/评分失败及应有评分缺失汇总为qa_eval partial、run completed_with_errors；合法0分、重试恢复及未配置Judge不误报。结果ID缺失/重复/不匹配或缺少Agent终态为failed，取消优先。规则在domain集中，application调用；不改接口、指标公式或历史原始记录；QA收尾前清除旧run_valid成功值，失败时保持false，不将该字段用作独立验收结论。
+
+完整边界、failed_count口径及验证要求见[终态汇总规则](../architecture/photobench-metrics-contract.md#t006-2026-10-24-运行终态汇总规则)。本地门禁、同步部署与新版真实回归分别记录，忙机仅暂存。

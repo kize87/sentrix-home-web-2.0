@@ -161,3 +161,6 @@ S11 做服务启停时接管的边界就是这三块。
 2026-10-22采样修复：`domain/runtime/metrics.py`集中验证逐分量依赖/TTL；`infrastructure/runtime/jetson_telemetry.py`负责原观测时间、监听归属缓存、PID启动标识和共享nvmap账本；`application/run_execution/gpu_sampler.py`负责绝对节拍、独立发布及完整性诊断，`service.py`负责真实接线与取消partial保存。无新增/移动Python模块，无新增端口或适配器装配点。
 | `photobench/application/run_execution/import_progress.py` | 同步导入期间有界轮询冻结端点，保存最后事实与查询故障，finally回收观察线程 | application | `photobench/domain/runs/analysis.py`、`photobench/domain/sentrix/ports.py` | `photobench/application/run_execution/service.py` |
 | `photobench/infrastructure/runtime/bounded_probe.py` | 无积压、并发有上限的探测；保留真实观测时刻和线程归属 | infrastructure | — | `photobench/infrastructure/runtime/jetson_telemetry.py` |
+
+
+2026-10-24：既有domain/runs/execution.py新增纯QA收尾事实检查，复用既有analysis评分有效性规则；既有application/run_execution/service.py在双池回收后调用。模块及依赖边未新增，无新端口或适配器。取消仍优先，历史读侧不修改原始状态。

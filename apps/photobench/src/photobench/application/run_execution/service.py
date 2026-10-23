@@ -82,6 +82,7 @@ from photobench.domain.runs.execution import (
     index_assets_by_name,
     modality_metrics,
     normalize_media_refs,
+    qa_completion_errors,
     resolve_gt_media,
     resolve_predicted_media,
     retrieved_candidate_asset_ids,
@@ -1834,27 +1835,20 @@ class RunExecution:
                 item.pop("_index", None)
             state.data["items"] = ordered
             executed = sum(1 for item in ordered if item.get("execution_status") == "completed")
-            state.data["run_valid"] = bool(len(ordered) == len(rows) and executed == len(rows))
+            state.data["run_valid"] = False
             record_progress()
-        failed = [
-            item for item in state.get("items") or [] if item.get("execution_status") in {"failed", "timeout"}
-        ]
+        if state.cancelled:
+            raise RunCancelledError("cancelled during qa_eval")
+        errors = qa_completion_errors(rows, ordered, judge_required=judge is not None)
+        state.set("run_valid", bool(not errors and len(ordered) == len(rows) and executed == len(rows)))
         phase_result = {
             "total_seconds": round(time.perf_counter() - started, 1),
             "qa_concurrency": concurrency,
-            "failed_count": len(failed),
-            "error": f"{len(failed)} 道题执行失败或超时" if failed else None,
-            "error_details": [
-                {
-                    "sample_id": item.get("qa_id") or "QA",
-                    "status": item.get("execution_status") or "failed",
-                    "error_type": "agent_error",
-                    "reason": str(item.get("error") or "QA execution failed"),
-                }
-                for item in failed
-            ],
+            "failed_count": len(errors),
+            "error": f"{len(errors)} 道题执行或评分失败" if errors else None,
+            "error_details": errors,
         }
-        if failed:
+        if errors:
             state.phase_partial("qa_eval", phase_result)
         else:
             state.phase_done("qa_eval", phase_result)

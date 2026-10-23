@@ -338,7 +338,8 @@ def test_cancelled_phase_submits_only_the_active_window_and_keeps_qa_ids():
 
     execution._evaluate_one = evaluate
     execution._probe_endpoint_health = lambda: None
-    execution._phase_qa_eval(state, _request(qa_concurrency=1))
+    with pytest.raises(RunCancelledError):
+        execution._phase_qa_eval(state, _request(qa_concurrency=1))
     assert started == ["q0"]
     assert [item["qa_id"] for item in state.get("items")] == [f"q{i}" for i in range(40)]
     assert all(item["execution_status"] == "scheduled" for item in state.get("items"))

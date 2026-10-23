@@ -44,6 +44,7 @@ from typing import Any
 from photobench.domain.runs.analysis import (
     VIDEO_EXTENSIONS,
     infer_media_type,
+    judge_score_for_summary,
     media_key,
     metric_triplet,
 )
@@ -70,6 +71,70 @@ class RunCancelledError(RuntimeError):
     def __init__(self, message: str = "run cancelled") -> None:
         super().__init__(message)
         self.message = message
+
+
+def qa_completion_errors(
+    rows: Sequence[Mapping[str, Any]],
+    items: Sequence[Mapping[str, Any]],
+    *,
+    judge_required: bool,
+) -> list[dict[str, Any]]:
+    """Assess final QA facts without IO or changing scores/history.
+
+    Missing/duplicate IDs or nonterminal Agent results are execution integrity
+    defects and raise ValueError. Terminal task/scoring failures return one
+    existing error-detail record per sample; a legitimate zero is a valid score.
+    Deliberately disabled Judge is not a scoring failure.
+    """
+    expected = [str(row.get("qa_id") or "") for row in rows]
+    actual = [str(item.get("qa_id") or "") for item in items]
+    if (
+        not all(expected)
+        or len(set(expected)) != len(expected)
+        or len(set(actual)) != len(actual)
+        or set(actual) != set(expected)
+    ):
+        raise ValueError("QA result integrity: missing, duplicate or unexpected sample IDs")
+    errors: list[dict[str, Any]] = []
+    for item in items:
+        status = item.get("execution_status")
+        if status not in {"completed", "failed", "timeout"}:
+            raise ValueError(f"QA result integrity: {item.get('qa_id')} has no terminal Agent result")
+        if status in {"failed", "timeout"} or item.get("failed") or item.get("error"):
+            errors.append(
+                {
+                    "sample_id": item["qa_id"],
+                    "status": status,
+                    "error_type": "agent_error",
+                    "reason": str(item.get("error") or "QA execution failed"),
+                }
+            )
+            continue
+        if not judge_required:
+            continue
+        outputs = [item.get(key) for key in ("judge", "task_judge", "evidence_judge")]
+        outputs.extend(item.get("task_judges") or [])
+        for turn in item.get("runtime_turns") or []:
+            if isinstance(turn, Mapping):
+                outputs.extend(turn.get(key) for key in ("judge", "task_judge", "evidence_judge"))
+        failed_output = next(
+            (value for value in outputs if isinstance(value, dict) and value.get("judge_status") == "failed"),
+            None,
+        )
+        quality = item.get("judge")
+        score = judge_score_for_summary(quality if isinstance(quality, dict) else None)
+        if item.get("judge_status") != "completed" or score is None or failed_output is not None:
+            detail = failed_output or (quality if isinstance(quality, dict) else {})
+            errors.append(
+                {
+                    "sample_id": item["qa_id"],
+                    "status": "failed",
+                    "error_type": "judge_error",
+                    "reason": f"Judge scoring incomplete ({item.get('judge_status') or 'unrecorded'}): "
+                    f"{detail.get('reason') or 'missing valid score or final scoring result'}",
+                }
+            )
+    return errors
 
 
 def safe_slug(value: str, fallback: str = "x") -> str:

@@ -15,6 +15,7 @@ from photobench.domain.runs.execution import (
     index_assets_by_name,
     modality_metrics,
     normalize_media_refs,
+    qa_completion_errors,
     resolve_gt_media,
     resolve_predicted_media,
     safe_slug,
@@ -309,3 +310,42 @@ def test_endpoint_identity_preserves_model_versions_and_refuses_ambiguous_select
     assert model_identity(payload)["status"] == "unavailable"
     assert model_identity(payload, "b")["raw_id"] == "b"
     assert model_identity(payload, "missing")["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("status", ["failed", "timeout"])
+def test_completion_counts_task_failure_once_without_inventing_a_judge_score(status):
+    details = qa_completion_errors(
+        [{"qa_id": "a"}],
+        [{"qa_id": "a", "execution_status": status, "error": "task failed", "judge_status": "skipped"}],
+        judge_required=True,
+    )
+    assert len(details) == 1
+    assert details[0]["error_type"] == "agent_error"
+
+
+def test_completion_respects_disabled_judge_and_records_earlier_turn_failure():
+    item = {"qa_id": "a", "execution_status": "completed"}
+    assert qa_completion_errors([{"qa_id": "a"}], [item], judge_required=False) == []
+    item.update(judge_status="completed", judge={"score": "0"})
+    assert qa_completion_errors([{"qa_id": "a"}], [item], judge_required=True) == []
+    item["runtime_turns"] = [{"judge": {"judge_status": "failed", "reason": "earlier turn failed"}}]
+    assert (
+        qa_completion_errors([{"qa_id": "a"}], [item], judge_required=True)[0]["error_type"] == "judge_error"
+    )
+
+
+@pytest.mark.parametrize(
+    "rows,items",
+    [
+        ([{"qa_id": "a"}], []),
+        ([{"qa_id": "a"}], [{"qa_id": "b", "execution_status": "completed"}]),
+        ([{"qa_id": "a"}], [{"qa_id": "a", "execution_status": "running"}]),
+        ([{"qa_id": "a"}], [{"qa_id": "a", "execution_status": "scheduled"}]),
+        ([{"qa_id": "a"}], [{"qa_id": "a", "execution_status": "completed"}] * 2),
+        ([{"qa_id": "a"}] * 2, [{"qa_id": "a", "execution_status": "completed"}]),
+        ([{}], [{"qa_id": "a", "execution_status": "completed"}]),
+    ],
+)
+def test_completion_rejects_missing_duplicate_or_nonterminal_results(rows, items):
+    with pytest.raises(ValueError, match="QA result integrity"):
+        qa_completion_errors(rows, items, judge_required=False)

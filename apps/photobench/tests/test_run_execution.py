@@ -314,6 +314,7 @@ def test_cancelled_unscheduled_qa_is_not_reported_as_a_completed_agent_or_judge(
     execution, _, _, _, _ = _execution()
 
     def cancelled(*_):
+        state.request_cancel()
         raise RunCancelledError("cancelled before starting")
 
     monkeypatch.setattr(execution, "_evaluate_one", cancelled)
@@ -321,7 +322,8 @@ def test_cancelled_unscheduled_qa_is_not_reported_as_a_completed_agent_or_judge(
         execution, "_judge", SimpleNamespace(judge_item=lambda *_: pytest.fail("cancelled QA judged"))
     )
     state = RunState({"scope_id": "s", "album_id": ALBUM})
-    execution._phase_qa_eval(state, _request())
+    with pytest.raises(RunCancelledError):
+        execution._phase_qa_eval(state, _request())
     progress = state.data["phases"]["qa_eval"]["progress"]
     assert progress["agent_completed"] == progress["completed"] == progress["judge_completed"] == 0
     assert progress["judge_skipped"] == 1
@@ -1475,3 +1477,100 @@ def test_import_final_scan_count_uses_product_outcomes_not_manifest_expectation(
     assert phase["scanned_count"] == 3  # five entries, three supported media actually settled
     assert (phase["accepted_count"], phase["deduplicated_count"], phase["failed_count"]) == (1, 1, 1)
     assert phase["directories"][0]["progress"]["request_status"] == "returned"
+
+
+@pytest.mark.parametrize(
+    "outcome", ["zero", "recovered", "failed", "exception", "missing", "subjudge_failed"]
+)
+def test_final_status_includes_judge_failure_without_waiting_for_full_scores(monkeypatch, outcome):
+    rows = [{"qa_id": f"q{index}"} for index in range(10)]
+    albums = FakeAlbums(
+        manifest=_manifest(), qa_rows=rows, files={"faces/1.jpg": b"J"}, directory_entries={"photos": 2}
+    )
+    execution, _, writer, _, _ = _execution(albums=albums)
+    judged_ids = []
+
+    def evaluate(row, *_):
+        return {"qa_id": row["qa_id"], "execution_status": "completed"}
+
+    def judge_item(item, *_):
+        judged_ids.append(item["qa_id"])
+        if item["qa_id"] == "q0" and outcome == "exception":
+            raise RuntimeError("Judge exhausted retries")
+        bad = item["qa_id"] == "q0" and outcome in {"failed", "missing"}
+        score = None if bad else 0
+        status = "failed" if bad and outcome == "failed" else "completed"
+        result = {**item, "judge_status": status, "judge": {"score": score, "reason": "final response"}}
+        if item["qa_id"] == "q0" and outcome == "subjudge_failed":
+            result["evidence_judge"] = {"judge_status": "failed", "reason": "evidence Judge unavailable"}
+        if outcome == "recovered":
+            result["judge"]["attempts"] = [{"error": "transient failure"}, {"score": 0}]
+        return result
+
+    monkeypatch.setattr(execution, "_evaluate_one", evaluate)
+    monkeypatch.setattr(execution, "_build_judge", lambda *_: SimpleNamespace(judge_item=judge_item))
+    state = execution.execute(_request())
+    expected = "completed" if outcome in {"zero", "recovered"} else "completed_with_errors"
+    assert state["status"] == writer.last_state()["status"] == expected
+    assert state["run_valid"] is (expected == "completed")
+    assert state["finished_at"] and state["current_phase"] is None
+    assert len(state["items"]) == len(judged_ids) == 10
+    assert set(judged_ids) == {row["qa_id"] for row in rows}
+    assert state["summary"]["judge_valid_count"] == (
+        9 if outcome in {"failed", "missing", "exception"} else 10
+    )
+    assert state["phases"]["aggregate"]["status"] == "done"
+    phase = state["phases"]["qa_eval"]
+    assert phase["status"] == ("done" if expected == "completed" else "partial")
+    assert phase["progress"]["judge_completed"] == 10
+    if expected != "completed":
+        assert phase["failed_count"] == 1
+        assert phase["error_details"][0]["sample_id"] == "q0"
+        assert phase["error_details"][0]["error_type"] == "judge_error"
+
+
+def test_a_lost_qa_record_fails_the_run_and_preserves_other_records(monkeypatch):
+    execution, _, writer, _, _ = _execution()
+    monkeypatch.setattr(
+        execution, "_evaluate_one", lambda *_: {"qa_id": "wrong-id", "execution_status": "completed"}
+    )
+    state = execution.execute(_request())
+    assert state["status"] == writer.last_state()["status"] == "failed"
+    assert state["failed_phase"] == "qa_eval"
+    assert state["run_valid"] is False
+    assert "QA result integrity" in state["fatal_error"]
+    assert state["items"][0]["qa_id"] == "wrong-id"
+
+
+def test_judge_failure_is_committed_to_raw_metadata_and_list_without_filling_score(tmp_path, monkeypatch):
+    import json
+
+    from photobench.domain.runs.analysis import run_list_entry
+    from photobench.infrastructure.results.store import FileResultWriter, read_entry
+
+    execution, _, _, _, _ = _execution()
+    execution.writer = FileResultWriter(tmp_path)
+    monkeypatch.setattr(
+        execution, "_evaluate_one", lambda row, *_: {"qa_id": row["qa_id"], "execution_status": "completed"}
+    )
+    monkeypatch.setattr(
+        execution,
+        "_build_judge",
+        lambda *_: SimpleNamespace(
+            judge_item=lambda item, *_: {
+                **item,
+                "judge_status": "failed",
+                "judge": {"score": None, "reason": "Judge unavailable"},
+            },
+        ),
+    )
+    state = execution.execute(_request())
+    raw = json.loads((tmp_path / "run_test/run.json").read_text())
+    metadata = read_entry(tmp_path / "run_test")
+    entry = run_list_entry(raw)
+    assert (
+        state["status"] == raw["status"] == metadata["status"] == entry["status"] == "completed_with_errors"
+    )
+    assert raw["items"][0]["judge"]["score"] is None
+    assert raw["phases"]["qa_eval"]["error_details"][0]["error_type"] == "judge_error"
+    assert entry["summary"]["judge_valid_count"] == metadata["summary"]["judge_valid_count"] == 0

@@ -172,3 +172,11 @@ it("仅构建模式不显示问答进度", () => {
   expect(screen.getByText("—")).toBeTruthy();
   expect(screen.queryByRole("progressbar")).toBeNull();
 });
+
+
+it("评分缺失以完成但有错误显示，保留实际评分数", () => {
+  renderTable([run({ status: "completed_with_errors", qa_count: 10, summary: { judge_valid_count: 9 } })]);
+  expect(screen.getByText("完成但有错误")).toBeTruthy();
+  expect(screen.getByText("9/10")).toBeTruthy();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
