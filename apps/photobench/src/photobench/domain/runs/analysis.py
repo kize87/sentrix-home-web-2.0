@@ -2089,6 +2089,7 @@ GPU_AGGREGATE_KEYS = (
     "gpu_allocated_unified_memory_mib",
     "gpu_in_use_unified_memory_mib",
     "model_process_memory_used_mib",
+    "benchmark_process_gpu_memory_mib",
     "kv_cache_usage_pct",
     "kv_cache_used_tokens",
     "power_draw_w",
