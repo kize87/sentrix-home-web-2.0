@@ -52,38 +52,45 @@ function renderTable(runs: Run[], page: Partial<RunPageState> = {}, handlers?: P
 }
 
 describe("状态列（1.0 :3023-3025）", () => {
-  it("列表显示已结束题目数，Judge进度不替代题目进度", () => {
+  it("按完成有效评分的样本数计算，不使用Agent完成数或Judge尝试结束数", () => {
     renderTable([run({ qa_count: 487, summary: { completed: 69, judge_valid_count: 68 }, phases: { qa_eval: {
       agent_completed: 71, judge_completed: 70, judge_total: 487,
-      progress: { completed: 69, total: 487 },
+      progress: { judge_completed: 72, judge_total: 486, completed: 69, total: 487 },
     } } })]);
-    expect(screen.getByText("71/487")).toBeTruthy();
-    expect(screen.queryByText(/Judge 已结束/)).toBeNull();
-    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("71");
-    expect(screen.getByText("71/487").parentElement?.title).toContain("有效评分：68 / 487");
+    const label = screen.getByText("68/487");
+    expect(screen.getByRole("columnheader", { name: "进度" })).toBeTruthy();
+    expect(label.hasAttribute("title")).toBe(false);
+    expect(label.parentElement?.hasAttribute("title")).toBe(false);
+    expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
-  it("历史未保存Judge计数时仍显示已有题目记录，不推断评分完整", () => {
+  it("历史有有效评分数即显示实际进度，缺少Judge尝试计数不影响", () => {
     renderTable([run({ qa_count: 487, summary: { completed: 487, judge_valid_count: 484 },
       phases: { qa_eval: { progress: { completed: 487, total: 487 } } } })]);
-    const label = screen.getByText("487/487");
-    expect(label.parentElement?.title).toContain("已保存题目记录");
-    expect(label.parentElement?.title).toContain("有效评分：484 / 487");
-    expect(screen.queryByText(/Judge|未记录/)).toBeNull();
+    expect(screen.getByText("484/487")).toBeTruthy();
+    expect(screen.queryByText("487/487")).toBeNull();
   });
 
-  it("0是有效观测，未知计数不变成0，异常计数不画满进度条", () => {
-    renderTable([run({ qa_count: 10, summary: { completed: 0 } })]);
+  it("0和未知值如实显示，评分失败不当作完成，异常计数不截断", () => {
+    renderTable([run({ qa_count: 10, summary: { judge_valid_count: 0 } })]);
     expect(screen.getByText("0/10")).toBeTruthy();
-    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("0");
     cleanup();
-    renderTable([run({ qa_count: 10 })]);
+    renderTable([run({ qa_count: 10, phases: { qa_eval: { judge_completed: 10, judge_total: 10 } } })]);
     expect(screen.getByText("—/10")).toBeTruthy();
-    expect(screen.queryByRole("progressbar")).toBeNull();
     cleanup();
-    renderTable([run({ qa_count: 10, summary: { completed: 11 } })]);
+    renderTable([run({ qa_count: 10, summary: { judge_valid_count: 9 }, phases: { qa_eval: {
+      progress: { judge_completed: 10, judge_total: 10 },
+    } } })]);
+    expect(screen.getByText("9/10")).toBeTruthy();
+    cleanup();
+    renderTable([run({ qa_count: 10, summary: { judge_valid_count: 11 } })]);
     expect(screen.getByText("11/10")).toBeTruthy();
     expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("未配置Judge时不显示进度", () => {
+    renderTable([run({ phases: { qa_eval: { progress: { judge_concurrency: 0 } } } })]);
+    expect(screen.getByText("—")).toBeTruthy();
   });
 
   it("不同 status 渲染出不同的 class 与文案", () => {
@@ -162,6 +169,6 @@ it("历史扫描未完成时明确告知列表不完整", () => {
 
 it("仅构建模式不显示问答进度", () => {
   renderTable([run({ mode: "build", qa_count: 0, summary: { completed: 0, total: 0 } })]);
-  expect(screen.getByTitle("仅构建相册，不执行问答")).toBeTruthy();
+  expect(screen.getByText("—")).toBeTruthy();
   expect(screen.queryByRole("progressbar")).toBeNull();
 });

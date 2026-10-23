@@ -15,33 +15,18 @@ import type { RunPageState } from "../../hooks/useRuns.ts";
 import { albumName, duration, fmtDate, fmtPct, modelName, statusLabel } from "../../lib/format.ts";
 import { modeBadgeClass, modeLabel } from "../../lib/qaBrowser.ts";
 
-/** Compact list projection; never use Judge counts as a substitute for QA counts. */
+/** A sample completes after a valid Judge score; Agent and Judge attempt counts are not substitutes. */
 function RunProgress({ run }: { run: Run }) {
-  if (run.mode === "build") return <span className="muted" title="仅构建相册，不执行问答">—</span>;
-  const count = (value: unknown): number | null =>
-    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
   const phase = run.phases?.qa_eval;
   const progress = phase?.progress;
-  const terminal = count(progress?.agent_completed) ?? count(phase?.agent_completed);
-  const completed = terminal ?? count(run.summary?.completed);
-  const total = count(progress?.agent_total) ?? count(phase?.agent_total) ??
-    (run.qa_count === null ? null : count(run.qa_count) ?? count(run.summary?.total) ?? count(progress?.total));
+  if (run.mode === "build" || progress?.judge_concurrency === 0) return <span className="muted">—</span>;
+  const count = (value: unknown): number | null =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const completed = count(run.summary?.judge_valid_count);
+  const total = run.qa_count === null ? null :
+    count(run.qa_count) ?? count(run.summary?.total) ?? count(progress?.total) ?? count(progress?.judge_total) ?? count(phase?.judge_total);
   const label = completed === null && total === null ? "—" : `${completed ?? "—"}/${total ?? "—"}`;
-  const basis = terminal === null ? "已保存题目记录" : "已结束题目（含明确失败）";
-  const tooltip = [
-    `${basis}：${completed ?? "未记录"} / ${total ?? "未记录"}`,
-    "题目数量不表示答对或评分完整。",
-  ];
-  const scored = count(run.summary?.judge_valid_count);
-  if (scored !== null) tooltip.push(`有效评分：${scored} / ${total ?? "未记录"}`);
-  const valid = completed !== null && total !== null && total > 0 && completed <= total;
-  if (completed !== null && total !== null && completed > total) tooltip.push("题目计数不一致，请查看详情。");
-  return (
-    <div className="run-progress" title={tooltip.join("\n")}>
-      <span className="run-progress-count" aria-label={`${basis}：${label}`}>{label}</span>
-      {valid ? <progress aria-label={`${basis}进度`} max={total} value={completed} /> : null}
-    </div>
-  );
+  return <span className="run-progress-count" aria-label={`评分完成 ${label}`}>{label}</span>;
 }
 
 export interface RunsTableProps {
@@ -104,7 +89,7 @@ export function RunsTable({
               <th>开始时间</th>
               <th>耗时</th>
               <th>状态</th>
-              <th>题目</th>
+              <th>进度</th>
               <th>媒体召回率</th>
               <th>质量均分</th>
               <th></th>
