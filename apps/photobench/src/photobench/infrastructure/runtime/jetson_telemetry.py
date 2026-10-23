@@ -391,43 +391,46 @@ def _process_identity(pid: int) -> tuple[str, int]:
     return fields[19], int(fields[1])
 
 
-def _listener_tree_identities(roots: set[int]) -> dict[int, tuple[str, int]]:
-    """Follow every thread's children; a worker may fork outside the main thread."""
-    identities: dict[int, tuple[str, int]] = {}
-    pending = list(roots)
-    while pending:
-        pid = pending.pop()
-        if pid in identities:
-            continue
-        before = _process_identity(pid)
-        identities[pid] = before
-        for task in Path(f"/proc/{pid}/task").iterdir():
-            for child in (task / "children").read_text().split():
-                child_pid = int(child)
-                # A child that vanished or was reparented races discovery. Let
-                # the full snapshot retry rather than silently omit its RAM.
-                if _process_identity(child_pid)[1] != pid:
-                    raise ValueError("process ancestry changed during discovery")
-                pending.append(child_pid)
-        if before != _process_identity(pid):
-            raise ValueError("process identity changed during discovery")
-    return identities
+def _process_parent_snapshot() -> dict[int, int]:
+    # The AGX kernel does not expose /proc/<pid>/task/<tid>/children.
+    # ps walks proc in native code outside the sampler process's GIL; do not
+    # read hundreds of unrelated stat files from Python probe threads.
+    completed = subprocess.run(
+        ["ps", "-e", "-o", "pid=,ppid="],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=0.5,
+    )
+    return {int(pid): int(parent) for pid, parent in (line.split() for line in completed.stdout.splitlines())}
 
 
 def _host_process_rows(target_ports: set[str] | None = None) -> list[dict[str, Any]]:
     identities: dict[int, tuple[str, int]] | None = None
     ports_by_pid: dict[int, set[str]] = {}
     if target_ports:
-        ports_by_pid = _listening_ports_by_pid(target_ports)
         try:
-            identities = _listener_tree_identities(set(ports_by_pid))
-            # Resolve again after taking identities, so a reused listener PID
-            # cannot inherit the previous process's port ownership.
+            parents = _process_parent_snapshot()
+            ports_by_pid = _listening_ports_by_pid(target_ports)
+            selected = set(ports_by_pid)
+            while True:
+                expanded = selected | {pid for pid, parent in parents.items() if parent in selected}
+                if expanded == selected:
+                    break
+                selected = expanded
+            identities = {}
+            for pid in selected:
+                try:
+                    identity = _process_identity(pid)
+                except (OSError, ValueError, IndexError):
+                    continue  # The snapshot may include a child that already exited.
+                if identity[1] == parents.get(pid):
+                    identities[pid] = identity
+            # A reused listener PID cannot inherit old port ownership.
             if ports_by_pid != _listening_ports_by_pid(target_ports):
                 identities = None
-        except (OSError, ValueError, IndexError):
-            # children is unavailable on some kernels / restricted proc mounts.
-            # Preserve complete legacy discovery instead of dropping workers.
+        except (OSError, ValueError, subprocess.SubprocessError):
+            # Failed native discovery falls back to the complete proc snapshot.
             identities = None
     if identities is None:
         identities = {}

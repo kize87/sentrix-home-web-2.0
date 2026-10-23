@@ -501,12 +501,6 @@ def test_scoped_process_inventory_reads_details_only_for_listeners_and_new_child
         directory.mkdir(exist_ok=True)
         fields = ["S", str(parent)] + ["0"] * 17 + [ticks]
         (directory / "stat").write_text(f"{pid} (name with spaces) " + " ".join(fields))
-        task = directory / "task" / str(pid)
-        task.mkdir(parents=True, exist_ok=True)
-        (task / "children").write_text("")
-        if parent:
-            children = proc / str(parent) / "task" / str(parent) / "children"
-            children.write_text(children.read_text() + f" {pid}")
 
     for pid, parent in ((1, 0), (2, 1), (3, 2), (8, 0)):
         write_stat(pid, parent)
@@ -526,6 +520,13 @@ def test_scoped_process_inventory_reads_details_only_for_listeners_and_new_child
         "_listening_ports_by_pid",
         lambda ports: {1: {"8104"}, 8: {"8106"}} if not ports else {1: {"8104"}},
     )
+
+    def parents():
+        return {
+            int(p.name): int((p / "stat").read_text().rsplit(")", 1)[1].split()[1]) for p in proc.iterdir()
+        }
+
+    monkeypatch.setattr(jetson, "_process_parent_snapshot", parents)
     identity_reads = []
     identity = jetson._process_identity
 
@@ -541,19 +542,16 @@ def test_scoped_process_inventory_reads_details_only_for_listeners_and_new_child
     assert {r["pid"] for r in rows} == {1, 2, 3}
     assert set(reads) == {1, 2, 3}, "unrelated same-name models must not incur RSS/command probes"
     assert 8 not in identity_reads, "port scope must not scan unrelated process stat files"
-    # Only a secondary thread owns this child; main-thread-only discovery loses it.
-    worker_thread = proc / "1/task/99"
-    worker_thread.mkdir()
-    write_stat(5, 0)
-    (proc / "5/stat").write_text((proc / "5/stat").read_text().replace("S 0", "S 1"))
-    (worker_thread / "children").write_text("5")
-    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 5}
     write_stat(4, 1)
-    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 4, 5}
-    assert {r["pid"] for r in jetson._host_process_rows()} == {1, 2, 3, 4, 5, 8}
-    # An unreadable children file must trigger full ancestry discovery.
-    (worker_thread / "children").unlink()
-    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 4, 5}
+    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 4}
+    assert {r["pid"] for r in jetson._host_process_rows()} == {1, 2, 3, 4, 8}
+
+    # Unavailable native snapshot must trigger complete proc ancestry discovery.
+    def unavailable():
+        raise OSError("ps unavailable")
+
+    monkeypatch.setattr(jetson, "_process_parent_snapshot", unavailable)
+    assert {r["pid"] for r in jetson._host_process_rows({"8104"})} == {1, 2, 3, 4}
 
     def reuse(pid):
         if pid == 2:
