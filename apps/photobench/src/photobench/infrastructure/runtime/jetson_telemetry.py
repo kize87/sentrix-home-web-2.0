@@ -644,9 +644,14 @@ def _augment_local_process_memory(
         ready = probe.collect(readers, budget=max(0.0, 2.5 - (time.monotonic() - started)))
     if topology_probe is not None and probe is not None and port_scoped:
         # Discovery that exceeded its initial 1s wait may finish DURING smaps.
-        # Harvest it without starting more work or extending the total budget.
+        # It can also finish just AFTER smaps. Use only the remainder of the
+        # same 2.5s window; returning early could age the prior topology past
+        # TTL even though its current replacement needs only a short wait.
+        # launch=False keeps this a join of existing work, never a new probe.
         latest = topology_probe.collect(
-            {"topology": lambda: _host_process_rows(target_ports)}, budget=0.0, launch=False
+            {"topology": lambda: _host_process_rows(target_ports)},
+            budget=max(0.0, 2.5 - (time.monotonic() - started)),
+            launch=False,
         ).get("topology")
         if latest is not None:
             if topology_snapshot is not None:

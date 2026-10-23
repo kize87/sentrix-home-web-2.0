@@ -320,7 +320,7 @@ def test_slow_topology_has_one_job_and_cannot_starve_memory_or_refresh_old_facts
     def slow(ports):
         calls.append(1)
         entered.set()
-        gate.wait(3)
+        gate.wait(10)
         return [row]
 
     monkeypatch.setattr(jetson, "_host_process_rows", slow)
@@ -343,7 +343,7 @@ def test_slow_topology_has_one_job_and_cannot_starve_memory_or_refresh_old_facts
                 topology_probe=topology,
                 topology_snapshot=snapshot,
             )
-            assert time.monotonic() - start < 1.4
+            assert time.monotonic() - start < 2.9
             assert entered.is_set() and calls == [1]
             assert data["memory_observations"]["topology"]["observed_at_monotonic"] == original
             assert data["memory_observations"]["process:42:pss"]["status"] == "available"
@@ -613,7 +613,10 @@ def test_port_inventory_optimization_preserves_non_port_service_selectors(monkey
 
 
 @pytest.mark.parametrize("changed_membership", [False, True])
-def test_topology_finishing_during_smaps_is_harvested_with_identity_check(monkeypatch, changed_membership):
+@pytest.mark.parametrize("topology_seconds", [1.1, 1.6])
+def test_topology_finishing_during_or_after_smaps_is_joined_with_identity_check(
+    monkeypatch, changed_membership, topology_seconds
+):
     import time
 
     from photobench.domain.runtime.metrics import memory_freshness
@@ -624,7 +627,7 @@ def test_topology_finishing_during_smaps_is_harvested_with_identity_check(monkey
 
     def topology(ports):
         calls.append(1)
-        time.sleep(1.1)
+        time.sleep(topology_seconds)
         fresh = [{**row, "rss_mib": 30}]
         if changed_membership:
             fresh.append({"pid": 43, "ppid": 42, "start_ticks": "43", "rss_mib": 5})
@@ -653,7 +656,7 @@ def test_topology_finishing_during_smaps_is_harvested_with_identity_check(monkey
         topology_snapshot=snapshot,
     )
     finished = time.monotonic()
-    assert 1.25 < finished - started < 1.8
+    assert max(1.25, topology_seconds - 0.05) < finished - started < 2.5
     assert calls == [1] and probe.pending_work() == [], "harvesting must not start extra work"
     assert snapshot["started"] >= started
     normalized, _ = memory_freshness({**data, "_t": finished})
