@@ -73,6 +73,40 @@ class RunCancelledError(RuntimeError):
         self.message = message
 
 
+TASK_FAILURE_REASONS = frozenset(
+    {
+        "no_tool_call_stopped",
+        "tool_budget_exhausted",
+        "step_budget_exhausted",
+        "timeout",
+        "model_error",
+        "guard_blocked",
+        "parse_failure",
+        "planner_blocked",
+    }
+)
+
+
+def agent_completion_error(item: Mapping[str, Any]) -> str | None:
+    """Assess final product turns, never intermediate model/tool recovery events."""
+    facts = [item, *(turn for turn in item.get("runtime_turns") or [] if isinstance(turn, Mapping))]
+    for fact in facts:
+        status = fact.get("turn_status") if fact is item else fact.get("agent_status") or fact.get("status")
+        if status in {"pending", "running", "started", "queued"}:
+            raise ValueError(f"QA result integrity: {item.get('qa_id')} has a nonterminal product turn")
+    for fact in facts:
+        status = fact.get("turn_status") if fact is item else fact.get("agent_status") or fact.get("status")
+        reason = fact.get("termination_reason")
+        if (
+            reason in TASK_FAILURE_REASONS
+            or reason == "cancelled"
+            or status in {"failed", "blocked", "cancelled", "error", "timeout"}
+            or fact.get("error")
+        ):
+            return str(reason or fact.get("error") or status)
+    return None
+
+
 def qa_completion_errors(
     rows: Sequence[Mapping[str, Any]],
     items: Sequence[Mapping[str, Any]],
@@ -100,13 +134,14 @@ def qa_completion_errors(
         status = item.get("execution_status")
         if status not in {"completed", "failed", "timeout"}:
             raise ValueError(f"QA result integrity: {item.get('qa_id')} has no terminal Agent result")
-        if status in {"failed", "timeout"} or item.get("failed") or item.get("error"):
+        agent_error = agent_completion_error(item)
+        if status in {"failed", "timeout"} or item.get("failed") or item.get("error") or agent_error:
             errors.append(
                 {
                     "sample_id": item["qa_id"],
                     "status": status,
                     "error_type": "agent_error",
-                    "reason": str(item.get("error") or "QA execution failed"),
+                    "reason": str(item.get("error") or agent_error or "QA execution failed"),
                 }
             )
             continue

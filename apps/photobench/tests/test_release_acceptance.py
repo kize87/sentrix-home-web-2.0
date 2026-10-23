@@ -334,6 +334,37 @@ def test_acceptance_does_not_invent_recovery_from_a_caught_error_or_hide_missing
     assert "scheduled_item_count_mismatch" in report["service_errors"]
 
 
+def test_independent_acceptance_rejects_completed_when_final_product_turn_failed():
+    a = script("photobench_acceptance")
+    item = task_item("parse_failure")
+    state = {"status": "completed", "items": [item]}
+    tasks = a.assess_tasks([item], expected_count=1)
+    assert tasks["controlled_failure"] == 1
+    assert a.check_terminal_status(state, state, tasks, []) == [
+        "terminal_status_expected:completed_with_errors"
+    ]
+    state["status"] = "completed_with_errors"
+    assert a.check_terminal_status(state, state, tasks, []) == []
+    assert "terminal_status_saved_api_mismatch" in a.check_terminal_status(
+        state, {"status": "completed"}, tasks, []
+    )
+    # An earlier failed conversation turn must not disappear behind the last answer.
+    item["termination_reason"] = "answered"
+    assert a.assess_tasks([item], expected_count=1)["controlled_failure"] == 1
+
+
+def test_independent_acceptance_keeps_zero_scores_and_recovery_while_checking_subjudges():
+    a = script("photobench_acceptance")
+    item = task_item()
+    state = {"status": "completed", "items": [item]}
+    tasks = a.assess_tasks([item], expected_count=1)
+    assert a.check_terminal_status(state, state, tasks, []) == []
+    item["runtime_turns"][0]["task_judges"] = [{"judge_status": "failed"}]
+    assert a.check_terminal_status(state, state, tasks, []) == [
+        "terminal_status_expected:completed_with_errors"
+    ]
+
+
 def test_acceptance_score_parser_rejects_bool_and_accepts_finite_integral_strings():
     a = script("photobench_acceptance")
     assert a.explicit_score("1.0") == 1

@@ -334,6 +334,49 @@ def test_completion_respects_disabled_judge_and_records_earlier_turn_failure():
     )
 
 
+@pytest.mark.parametrize("reason", ["step_budget_exhausted", "parse_failure", "timeout", "model_error"])
+@pytest.mark.parametrize("earlier_turn", [False, True])
+def test_partial_product_failure_is_not_hidden_by_completed_execution(reason, earlier_turn):
+    item = {
+        "qa_id": "a",
+        "execution_status": "completed",
+        "judge_status": "completed",
+        "judge": {"score": 0},
+        "turn_status": "complete",
+        "termination_reason": "answered",
+        "runtime_turns": [{"agent_status": "partial", "termination_reason": reason}],
+    }
+    if not earlier_turn:
+        item.update(turn_status="partial", termination_reason=reason)
+    details = qa_completion_errors([{"qa_id": "a"}], [item], judge_required=True)
+    assert len(details) == 1
+    assert details[0]["error_type"] == "agent_error"
+    assert details[0]["reason"] == reason
+    assert item["judge"]["score"] == 0
+
+
+def test_partial_answer_with_gap_and_recovered_calls_remain_successful():
+    item = {
+        "qa_id": "a",
+        "execution_status": "completed",
+        "turn_status": "partial",
+        "termination_reason": "answered_with_gap",
+        "judge_status": "completed",
+        "judge": {"score": 0},
+        "runtime_turns": [
+            {
+                "status": "partial",
+                "termination_reason": "answered_with_gap",
+                "execution_trace": [{"status": "error"}, {"status": "complete"}],
+            }
+        ],
+    }
+    assert qa_completion_errors([{"qa_id": "a"}], [item], judge_required=True) == []
+    item["runtime_turns"][0]["status"] = "running"
+    with pytest.raises(ValueError, match="nonterminal product turn"):
+        qa_completion_errors([{"qa_id": "a"}], [item], judge_required=True)
+
+
 @pytest.mark.parametrize(
     "rows,items",
     [

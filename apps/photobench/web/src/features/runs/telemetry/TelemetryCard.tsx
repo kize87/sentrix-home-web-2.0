@@ -250,6 +250,9 @@ export function TelemetryCard({ run }: TelemetryCardProps) {
   const phaseRows = liveTelemetryPhaseRows(run);
   const processes = telemetryProcessList(run);
   const chartData = useMemo(() => telemetryChart(run), [run]);
+  // Count only the points actually drawn; a checkpoint or downsampled history
+  // cannot establish whole-run coverage or the longest raw sampling gap.
+  const incompletePoints = chartData?.history.filter((point) => point.memory_complete === false).length ?? 0;
   const hasSampleHistory = Array.isArray(live.history) && live.history.length >= 2;
   // 轮询会每 2 秒换一个 run 对象，但历史点可能没变。比较实际历史内容，
   // 让相同时间点的null/数值修正同样触发重画。否则 notMerge 会重建图表，鼠标悬浮的 tooltip
@@ -340,6 +343,10 @@ export function TelemetryCard({ run }: TelemetryCardProps) {
         <div className="telemetry-chart">
           <div ref={canvasRef} className="telemetry-chart-canvas" role="img" aria-label="资源占用趋势"></div>
           <small className="muted">
+            {incompletePoints > 0 ? (
+              <>当前绘图点中有 {incompletePoints}/{chartData.history.length} 点核心内存采集不完整，相关曲线会断开。
+                这不表示进程重启；此处计数仅覆盖当前绘图点。</>
+            ) : null}
             {!hasSampleHistory ? (
               <>阶段快照示意，共 {chartData.history.length} 个快照；横轴仅为快照序号，不表示真实耗时。</>
             ) : run?.history_mode === "checkpoint" ? (

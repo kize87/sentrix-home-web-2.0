@@ -228,7 +228,8 @@ def test_sudo_nvmap_probe_uses_short_timeout_and_returns_unavailable(monkeypatch
 
 
 def test_listener_cache_revalidates_socket_and_process_identity(monkeypatch, tmp_path):
-
+    clock = [100.0]
+    monkeypatch.setattr(jetson.time, "monotonic", lambda: clock[0])
     proc = tmp_path / "proc"
     (proc / "net").mkdir(parents=True)
     for pid in (1, 2, 3):
@@ -253,8 +254,9 @@ def test_listener_cache_revalidates_socket_and_process_identity(monkeypatch, tmp
     monkeypatch.setattr(jetson, "_socket_inodes", inodes)
     assert jetson._listening_ports_by_pid({"8100"}) == {1: {"8100"}}
     calls.clear()
+    clock[0] += 5
     assert jetson._listening_ports_by_pid({"8100"}) == {1: {"8100"}}
-    assert calls == [1], "cached topology should inspect only validated holders"
+    assert calls == [1], "unchanged verified sockets must not trigger periodic full fd scans"
     # gpu_stats checks only the model port; process_memory checks the whole
     # frozen topology. Alternating those queries must not evict each other.
     assert jetson._listening_ports_by_pid({"8100", "8106"}) == {1: {"8100"}, 2: {"8106"}}
@@ -302,6 +304,54 @@ def test_pid_identity_change_invalidates_collected_memory(monkeypatch):
     result, _ = memory_freshness({**data, "_t": 100.1})
     assert result["model_process_system_memory_used_mib"] is None
     assert result["product_stack_memory_mib"] is None
+
+
+def test_slow_topology_has_one_job_and_cannot_starve_memory_or_refresh_old_facts(monkeypatch):
+    import threading
+    import time
+
+    from photobench.domain.runtime.metrics import memory_freshness
+    from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
+
+    gate, entered = threading.Event(), threading.Event()
+    calls = []
+    row = {"pid": 42, "start_ticks": "42", "rss_mib": 20, "listening_ports": [8100]}
+
+    def slow(ports):
+        calls.append(1)
+        entered.set()
+        gate.wait(3)
+        return [row]
+
+    monkeypatch.setattr(jetson, "_host_process_rows", slow)
+    monkeypatch.setattr(jetson, "_process_start_ticks", lambda pid: "42")
+    monkeypatch.setattr(jetson, "_process_smaps_memory_mib", lambda pid: (8, 10))
+    monkeypatch.setattr(jetson, "_nvmap_cache", {"at": float("-inf"), "table": None})
+    monkeypatch.setattr(jetson, "_read_nvmap_clients", lambda: "llama 0 42 10240K\n")
+    original = time.monotonic() - 4
+    snapshot = {"started": original, "finished": original + 0.1, "value": [row]}
+    topology, memory = BoundedProbe(limit=1), BoundedProbe(limit=4)
+    try:
+        for _ in range(2):
+            start = time.monotonic()
+            data = jetson._augment_local_process_memory(
+                {},
+                model_pid=None,
+                endpoint_port="8100",
+                telemetry_services={"main_model": {"ports": [8100]}},
+                probe=memory,
+                topology_probe=topology,
+                topology_snapshot=snapshot,
+            )
+            assert time.monotonic() - start < 1
+            assert entered.is_set() and calls == [1]
+            assert data["memory_observations"]["topology"]["observed_at_monotonic"] == original
+            assert data["memory_observations"]["process:42:pss"]["status"] == "available"
+            normalized, _ = memory_freshness({**data, "_t": time.monotonic()})
+            assert normalized["product_stack_memory_mib"] is None
+            assert topology.pending_work() == ["topology"]
+    finally:
+        gate.set()
 
 
 def test_probe_budget_stops_additional_smaps_and_does_not_claim_complete_memory(monkeypatch):

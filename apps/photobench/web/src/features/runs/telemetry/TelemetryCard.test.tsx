@@ -100,9 +100,11 @@ describe("TelemetryCard · echarts 生命周期（1.0 :1027-1125 / :2824-2837）
   });
 
   it("缺失内存保持曲线缺口，不转零或连接缺口", () => {
-    render(<TelemetryCard run={run({ telemetry_live: {
+    const view = render(<TelemetryCard run={run({ telemetry_live: {
       source: "host_nvidia_smi", samples_count: 3,
-      history: [{ t: 0, system_memory_used_mib: 1024 }, { t: 1, system_memory_used_mib: null }, { t: 2, system_memory_used_mib: 2048 }],
+      history: [{ t: 0, system_memory_used_mib: 1024, memory_complete: true },
+        { t: 1, system_memory_used_mib: null, memory_complete: false },
+        { t: 2, system_memory_used_mib: 2048, memory_complete: true }],
     } })} />);
     const option = echartsMock.instance.setOption.mock.calls[0]?.[0] as {
       series: Array<{ name: string; data: Array<number | null>; connectNulls: boolean }>;
@@ -110,6 +112,7 @@ describe("TelemetryCard · echarts 生命周期（1.0 :1027-1125 / :2824-2837）
     const memory = option.series.find((row) => row.name === "整机 RAM");
     expect(memory?.data).toEqual([1, null, 2]);
     expect(memory?.connectNulls).toBe(false);
+    expect(view.container.textContent).toContain("当前绘图点中有 1/3 点核心内存采集不完整");
   });
   it("挂载建一次实例；run 变化只重画，不再 init", () => {
     const view = render(<TelemetryCard run={run()} />);

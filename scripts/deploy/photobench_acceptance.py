@@ -648,6 +648,18 @@ def assess_tasks(items: list[dict[str, Any]], *, expected_count: int = 10) -> di
     for index, item in enumerate(items):
         reason = item.get("termination_reason")
         turns = item.get("runtime_turns") or []
+        # Independently inspect every final product turn, including earlier
+        # conversation turns; intermediate recovered model errors are not finals.
+        failure = next(
+            (
+                turn.get("termination_reason")
+                for turn in turns
+                if turn.get("termination_reason") in failure_reasons
+            ),
+            None,
+        )
+        if failure:
+            reason = failure
         terminal = bool(turns) and item.get("execution_status") == "completed"
         for turn in turns:
             trace = turn.get("agent2_trace") or {}
@@ -735,6 +747,29 @@ def assess_tasks(items: list[dict[str, Any]], *, expected_count: int = 10) -> di
     return report
 
 
+def check_terminal_status(
+    saved: dict[str, Any], api: dict[str, Any], tasks: dict[str, Any], missing_scores: list[Any]
+) -> list[str]:
+    """Independent cross-check, without importing the production completion rule."""
+    errors = []
+    if saved.get("status") != api.get("status"):
+        errors.append("terminal_status_saved_api_mismatch")
+    outputs: list[Any] = []
+    for item in saved.get("items") or []:
+        for fact in [item, *(item.get("runtime_turns") or [])]:
+            outputs.extend(fact.get(k) for k in ("judge", "task_judge", "evidence_judge"))
+            outputs.extend(fact.get("task_judges") or [])
+    failed_judge = any(isinstance(o, dict) and o.get("judge_status") == "failed" for o in outputs)
+    task_failure = any(tasks.get(k) for k in ("controlled_failure", "unhandled_failure", "cancelled"))
+    partial = any(p.get("status") == "partial" for p in (saved.get("phases") or {}).values())
+    expected = (
+        "completed_with_errors" if task_failure or missing_scores or failed_judge or partial else "completed"
+    )
+    if saved.get("status") != expected:
+        errors.append(f"terminal_status_expected:{expected}")
+    return errors
+
+
 def audit(runtime: Path) -> dict[str, Any]:
     bindings = read_json(runtime / "bindings.json")
     pre = read_json(runtime / "preflight.json")
@@ -805,6 +840,7 @@ def audit(runtime: Path) -> dict[str, Any]:
             fact = attempt.get("score_normalization") or {}
             if fact.get("converted"):
                 normalizations.append({"index": index, "fact": fact})
+    chain_errors.extend(check_terminal_status({**saved, "items": items}, api, tasks, missing_scores))
     infrastructure_errors: list[str] = []
     phase_report: dict[str, Any] = {}
     observed_phases = (
@@ -959,7 +995,7 @@ def audit(runtime: Path) -> dict[str, Any]:
     report = {
         "run_id": run_id,
         "revision": pre["revision"],
-        "acceptance_rule_version": 3,
+        "acceptance_rule_version": 4,
         "mode": mode,
         "service_pass": not chain_errors,
         "scoring_complete": None if mode == "build" else len(scores) == expected_items,

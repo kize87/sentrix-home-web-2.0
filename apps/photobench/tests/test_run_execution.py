@@ -1480,7 +1480,17 @@ def test_import_final_scan_count_uses_product_outcomes_not_manifest_expectation(
 
 
 @pytest.mark.parametrize(
-    "outcome", ["zero", "recovered", "failed", "exception", "missing", "subjudge_failed"]
+    "outcome",
+    [
+        "zero",
+        "recovered",
+        "failed",
+        "exception",
+        "missing",
+        "subjudge_failed",
+        "step_budget_exhausted",
+        "parse_failure",
+    ],
 )
 def test_final_status_includes_judge_failure_without_waiting_for_full_scores(monkeypatch, outcome):
     rows = [{"qa_id": f"q{index}"} for index in range(10)]
@@ -1491,7 +1501,10 @@ def test_final_status_includes_judge_failure_without_waiting_for_full_scores(mon
     judged_ids = []
 
     def evaluate(row, *_):
-        return {"qa_id": row["qa_id"], "execution_status": "completed"}
+        item = {"qa_id": row["qa_id"], "execution_status": "completed"}
+        if row["qa_id"] == "q0" and outcome in {"step_budget_exhausted", "parse_failure"}:
+            item.update(turn_status="partial", termination_reason=outcome)
+        return item
 
     def judge_item(item, *_):
         judged_ids.append(item["qa_id"])
@@ -1526,7 +1539,9 @@ def test_final_status_includes_judge_failure_without_waiting_for_full_scores(mon
     if expected != "completed":
         assert phase["failed_count"] == 1
         assert phase["error_details"][0]["sample_id"] == "q0"
-        assert phase["error_details"][0]["error_type"] == "judge_error"
+        assert phase["error_details"][0]["error_type"] == (
+            "agent_error" if outcome in {"step_budget_exhausted", "parse_failure"} else "judge_error"
+        )
 
 
 def test_a_lost_qa_record_fails_the_run_and_preserves_other_records(monkeypatch):

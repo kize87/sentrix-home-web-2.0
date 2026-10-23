@@ -317,6 +317,7 @@ def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, s
     ``/proc/*/fd`` 的 readlink 给 fd→inode。不给 ``target_ports`` 过滤的话，一台
     跑满连接的机器上这一步会扫遍所有 fd。限定端口时，2秒内仅重查已知持有者的
     socket与启动标识；监听集合/身份变化立即全扫，避免把固定PID当长期身份。
+    缓存只保存定位结果，每次都重新核验所有权，不因固定时间到期重复全机fd扫描。
     """
     target_ports = {str(port) for port in (target_ports or set())}
     socket_ports: dict[str, str] = {}
@@ -347,7 +348,6 @@ def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, s
         if (
             target_ports
             and entry.get("signature") == signature
-            and time.monotonic() < entry.get("expires", 0)
             and cached
             and all(
                 identities.get(pid) is not None
@@ -356,6 +356,7 @@ def _listening_ports_by_pid(target_ports: set[str] | None = None) -> dict[int, s
                 for pid, held in cached.items()
             )
         ):
+            entry["expires"] = time.monotonic() + 2.0  # idle retention, not observation freshness
             return {pid: {socket_ports[inode] for inode in held} for pid, held in cached.items()}
     owners: dict[int, set[str]] = {}
     result: dict[int, set[str]] = {}
@@ -473,6 +474,8 @@ def _augment_local_process_memory(
     endpoint_port: str,
     telemetry_services: Mapping[str, Any] | None = None,
     probe: BoundedProbe | None = None,
+    topology_probe: BoundedProbe | None = None,
+    topology_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fresh related-PID PSS plus main/auxiliary nvmap allocation estimates."""
     # Never let a disappeared PID or failed smaps read inherit a previous total.
@@ -509,13 +512,31 @@ def _augment_local_process_memory(
                 target_ports.update(str(port) for port in spec.get("ports") or [])
                 if spec.get("pids") or (spec.get("keywords") and not spec.get("ports")):
                     port_scoped = False
+    topology_result: dict[str, Any] = {}
     try:
         # Legacy keyword matching and explicit PID selectors require the full
         # inventory; narrowing them to listener trees would silently omit RAM.
-        rows = _host_process_rows(target_ports if port_scoped else None)
+        ports = target_ports if port_scoped else None
+        if topology_probe is None:
+            rows = _host_process_rows(ports)
+        else:
+            ready_topology = topology_probe.collect(
+                {"topology": lambda: _host_process_rows(ports)}, budget=0.1
+            )
+            if "topology" in ready_topology and topology_snapshot is not None:
+                topology_snapshot.clear()
+                topology_snapshot.update(ready_topology["topology"])
+            topology_result = dict(topology_snapshot or ready_topology.get("topology") or {})
+            # Retain original times; memory_freshness invalidates slow/old
+            # discoveries. No accumulating topology jobs or artificial refresh.
+            rows = topology_result.get("value") or []
     except Exception:
         rows = []
-    topology_observation = _observation("proc_listener_topology", started, available=bool(rows))
+    topology_observation = _observation(
+        "proc_listener_topology", float(topology_result.get("started", started)), available=bool(rows)
+    )
+    if topology_result:
+        topology_observation["finished_at_monotonic"] = topology_result.get("finished")
     if scope:
         main_spec = dict(scope.get("main_model") or {})
         model_rows = service_rows(rows, main_spec) if main_spec.get("local") is not False else []
@@ -948,6 +969,8 @@ class LocalJetsonLlamaCppTelemetryProvider:
     ):
         self.telemetry_services = telemetry_services
         self._memory_probe = BoundedProbe(limit=4)
+        self._topology_probe = BoundedProbe(limit=1)
+        self._topology_snapshot: dict[str, Any] = {}
         self._optional_probe = BoundedProbe(limit=1)
         self._kv_observation: dict[str, Any] = {}
         parsed = urlparse(endpoint_url)
@@ -1106,7 +1129,11 @@ class LocalJetsonLlamaCppTelemetryProvider:
         }
 
     def pending_work(self) -> list[str]:
-        return [*self._memory_probe.pending_work(), *self._optional_probe.pending_work()]
+        return [
+            *self._memory_probe.pending_work(),
+            *self._topology_probe.pending_work(),
+            *self._optional_probe.pending_work(),
+        ]
 
     def process_memory(self) -> dict[str, Any]:
         try:
@@ -1117,6 +1144,8 @@ class LocalJetsonLlamaCppTelemetryProvider:
                 endpoint_port=str(self.port),
                 telemetry_services=self.telemetry_services,
                 probe=self._memory_probe,
+                topology_probe=self._topology_probe,
+                topology_snapshot=self._topology_snapshot,
             )
             pid = augmented.get("root_pid")
             identity = (pid, _process_start_ticks(pid)) if isinstance(pid, int) else None
