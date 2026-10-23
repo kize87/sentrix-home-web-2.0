@@ -520,9 +520,20 @@ def _augment_local_process_memory(
         if topology_probe is None:
             rows = _host_process_rows(ports)
         else:
+            topology_deadline = started + 1.0
+            discovery = {"topology": lambda: _host_process_rows(ports)}
             ready_topology = topology_probe.collect(
-                {"topology": lambda: _host_process_rows(ports)}, budget=0.1
+                discovery, budget=max(0.0, topology_deadline - time.monotonic())
             )
+            if float(ready_topology.get("topology", {}).get("started", started)) < started:
+                # Harvesting a previous callback's completed job does not launch
+                # its successor. Start a current discovery within the SAME
+                # deadline, so a slow memory walk cannot age that old topology
+                # beyond TTL while a newer discovery could have completed.
+                current_topology = topology_probe.collect(
+                    discovery, budget=max(0.0, topology_deadline - time.monotonic())
+                )
+                ready_topology.update(current_topology)
             if "topology" in ready_topology and topology_snapshot is not None:
                 topology_snapshot.clear()
                 topology_snapshot.update(ready_topology["topology"])
@@ -586,10 +597,10 @@ def _augment_local_process_memory(
             for row in selected_rows
         }
         # On AGX, a real smaps_rollup walk during visual inference can exceed
-        # 0.6s. Allow the current reads to finish within a bounded 1.5s window,
+        # 0.6s. Allow topology and current reads a bounded 2.5s total window,
         # still below the unchanged 3s source TTL/coverage requirement. Do not
         # substitute a prior memory value when a read exceeds this deadline.
-        ready = probe.collect(readers, budget=max(0.0, 1.5 - (time.monotonic() - started)))
+        ready = probe.collect(readers, budget=max(0.0, 2.5 - (time.monotonic() - started)))
     for row in selected_rows:
         pid = int(row["pid"])
         observed = time.monotonic()

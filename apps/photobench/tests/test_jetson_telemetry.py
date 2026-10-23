@@ -343,7 +343,7 @@ def test_slow_topology_has_one_job_and_cannot_starve_memory_or_refresh_old_facts
                 topology_probe=topology,
                 topology_snapshot=snapshot,
             )
-            assert time.monotonic() - start < 1
+            assert time.monotonic() - start < 1.4
             assert entered.is_set() and calls == [1]
             assert data["memory_observations"]["topology"]["observed_at_monotonic"] == original
             assert data["memory_observations"]["process:42:pss"]["status"] == "available"
@@ -383,6 +383,43 @@ def test_visual_load_smaps_finishes_within_bounded_window(monkeypatch):
     normalized, _ = memory_freshness({**data, "_t": time.monotonic()})
     assert normalized["memory_complete"] is True
     assert normalized["model_process_host_memory_mib"] == 10
+
+
+def test_delayed_topology_is_refreshed_before_memory_walk_ages_it_out(monkeypatch):
+    import time
+
+    from photobench.domain.runtime.metrics import memory_freshness
+    from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
+
+    row = {"pid": 42, "start_ticks": "42", "rss_mib": 20, "listening_ports": [8100]}
+
+    def topology(ports):
+        time.sleep(0.25)
+        return [row]
+
+    def smaps(pid):
+        time.sleep(0.75)
+        return 8, 10
+
+    monkeypatch.setattr(jetson, "_host_process_rows", topology)
+    monkeypatch.setattr(jetson, "_process_start_ticks", lambda pid: "42")
+    monkeypatch.setattr(jetson, "_process_smaps_memory_mib", smaps)
+    monkeypatch.setattr(jetson, "_nvmap_cache", {"at": float("-inf"), "table": None})
+    monkeypatch.setattr(jetson, "_read_nvmap_clients", lambda: "llama 0 42 10240K\n")
+    snapshot = {"started": time.monotonic() - 2.5, "value": [row]}
+    started = time.monotonic()
+    data = jetson._augment_local_process_memory(
+        {},
+        model_pid=None,
+        endpoint_port="8100",
+        telemetry_services={"main_model": {"ports": [8100]}},
+        probe=BoundedProbe(limit=4),
+        topology_probe=BoundedProbe(limit=1),
+        topology_snapshot=snapshot,
+    )
+    assert data["memory_observations"]["topology"]["observed_at_monotonic"] >= started
+    normalized, _ = memory_freshness({**data, "_t": time.monotonic()})
+    assert normalized["memory_complete"] is True
 
 
 def test_probe_budget_stops_additional_smaps_and_does_not_claim_complete_memory(monkeypatch):
