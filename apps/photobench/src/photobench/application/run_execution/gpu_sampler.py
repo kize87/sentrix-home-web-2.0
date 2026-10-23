@@ -39,7 +39,7 @@ from typing import Any
 
 from photobench.domain.runs.analysis import aggregate_gpu_samples, validated_telemetry_sample
 from photobench.domain.runtime.metrics import finite_number
-from photobench.domain.runtime.ports import OwnedTelemetryWork, TelemetryProvider
+from photobench.domain.runtime.ports import ManagedTelemetryWork, OwnedTelemetryWork, TelemetryProvider
 
 #: 采样行会带上相位标签，读侧就不必去 run.json 里反查「这条样本属于哪一段」。
 #: 1.0 ``_persist_gpu_sample``（``:2113``）的那张表，逐字照搬（含中文标签）。
@@ -115,6 +115,8 @@ class GpuSampler:
         self._callback_failures = self._publisher_failures = self._collection_failures = 0
         self._missed_intervals = 0
         self._stop_pending = []
+        if isinstance(self.provider, ManagedTelemetryWork):
+            self.provider.start_sampling()
         self._thread = threading.Thread(target=self._run, daemon=True, name="gpu-sampler")
         self._thread.start()
         if self.on_aggregate is not None:
@@ -188,6 +190,8 @@ class GpuSampler:
         )
         timing["process_probe_seconds"] = process_memory.get("process_probe_seconds")
         timing["process_probe_pending"] = process_memory.get("process_probe_pending")
+        if "process_probe_worker_pid" in process_memory:
+            timing["process_probe_worker_pid"] = process_memory["process_probe_worker_pid"]
         timestamp = time.monotonic()
         timing.update(
             finished_at_monotonic=timestamp,
@@ -368,6 +372,13 @@ class GpuSampler:
                     self._last_publisher_failure = f"{type(error).__name__}: {error}"
 
     def _run(self) -> None:
+        try:
+            self._sample_loop()
+        finally:
+            if isinstance(self.provider, ManagedTelemetryWork):
+                self.provider.stop_sampling()
+
+    def _sample_loop(self) -> None:
         deadline = time.monotonic()
         while not self._stop.is_set():
             # 1.0 ``:1782``：一次探不到不该终止采样。

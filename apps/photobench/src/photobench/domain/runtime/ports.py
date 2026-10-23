@@ -141,3 +141,12 @@ class OwnedTelemetryWork(Protocol):
     def pending_work(self) -> list[str]:
         """Return live owned probe identifiers, not a stale stop snapshot."""
         ...
+
+
+@runtime_checkable
+class ManagedTelemetryWork(Protocol):
+    """Optional sampler-owned resources; core telemetry methods stay unchanged."""
+
+    def start_sampling(self) -> None: ...
+
+    def stop_sampling(self) -> None: ...

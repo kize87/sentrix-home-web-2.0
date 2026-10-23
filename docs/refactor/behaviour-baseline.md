@@ -960,3 +960,13 @@ Agent和Judge仍使用独立线程池，协调器等待任一池完成即提交�
 沿用八种运行总状态。新版在全部Agent/Judge收尾后，将最终执行/评分失败及应有评分缺失汇总为qa_eval partial、run completed_with_errors；合法0分、重试恢复及未配置Judge不误报。结果ID缺失/重复/不匹配或缺少Agent终态为failed，取消优先。规则在domain集中，application调用；不改接口、指标公式或历史原始记录；QA收尾前清除旧run_valid成功值，失败时保持false，不将该字段用作独立验收结论。
 
 完整边界、failed_count口径及验证要求见[终态汇总规则](../architecture/photobench-metrics-contract.md#t006-2026-10-24-运行终态汇总规则)。本地门禁、同步部署与新版真实回归分别记录，忙机仅暂存。
+
+
+### 2026-10-24 Jetson受管进程探测
+
+Jetson正式采样的核心进程内存读取移入单个spawn子进程，与HTTP完整曲线读取和全样本发布分离。
+可选ManagedTelemetryWork由GpuSampler启动前准备、采样线程finally关闭；四方法原端口不变。
+同一时刻最多一个请求，超时不追加请求、不复用前次值；迟到结果保持原观测起止，domain仍按3秒TTL验证。
+关闭管道后子进程结束当前读取并退出；未退出PID经OwnedTelemetryWork计入stop_pending，不能冒称回收完成。
+仅创建与关闭本轮探测进程，不启停共享模型。探测进程作为产品后代参与PSS归属；使用当前绑定解释器，无新增依赖或部署开关。
+直接单步sample_once保留进程内诊断路径；正式start始终使用受管进程，启动失败明示unavailable，不静默回退。

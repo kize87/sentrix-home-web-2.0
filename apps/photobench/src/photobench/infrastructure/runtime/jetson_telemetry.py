@@ -41,6 +41,7 @@ from photobench.domain.runtime.metrics import (
     system_used,
 )
 from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
+from photobench.infrastructure.runtime.jetson_probe import JetsonMemoryWorker
 from photobench.infrastructure.runtime.telemetry_scope import (
     dedupe_rows,
     load_telemetry_services,
@@ -1130,6 +1131,9 @@ class LocalJetsonLlamaCppTelemetryProvider:
         self._topology_snapshot: dict[str, Any] = {}
         self._optional_probe = BoundedProbe(limit=1)
         self._kv_observation: dict[str, Any] = {}
+        self._memory_worker: JetsonMemoryWorker | None = None
+        self._worker_requested = False
+        self._worker_error: str | None = None
         parsed = urlparse(endpoint_url)
         if parsed.scheme not in {"http", "https"} or not parsed.port:
             raise ValueError("a local llama.cpp endpoint with an explicit port is required")
@@ -1290,20 +1294,41 @@ class LocalJetsonLlamaCppTelemetryProvider:
             *self._memory_probe.pending_work(),
             *self._topology_probe.pending_work(),
             *self._optional_probe.pending_work(),
+            *(self._memory_worker.pending_work() if self._memory_worker is not None else []),
         ]
+
+    def start_sampling(self) -> None:
+        self._worker_requested = True
+        self._worker_error = None
+        try:
+            if self._memory_worker is not None and self._memory_worker.pending_work():
+                raise RuntimeError("previous Jetson memory worker is still running")
+            self._memory_worker = JetsonMemoryWorker(str(self.port), self.telemetry_services)
+            self._memory_worker.start()
+        except Exception as error:
+            self._worker_error = f"{type(error).__name__}: {error}"
+
+    def stop_sampling(self) -> None:
+        if self._memory_worker is not None:
+            self._memory_worker.close()
 
     def process_memory(self) -> dict[str, Any]:
         try:
             data: dict[str, Any] = self._last_memory.get("data") or {}
-            augmented = _augment_local_process_memory(
-                data,
-                model_pid=None,
-                endpoint_port=str(self.port),
-                telemetry_services=self.telemetry_services,
-                probe=self._memory_probe,
-                topology_probe=self._topology_probe,
-                topology_snapshot=self._topology_snapshot,
-            )
+            if self._worker_requested:
+                if self._worker_error is not None or self._memory_worker is None:
+                    raise RuntimeError(self._worker_error or "Jetson memory worker unavailable")
+                augmented = {**data, **self._memory_worker.sample()}
+            else:
+                augmented = _augment_local_process_memory(
+                    data,
+                    model_pid=None,
+                    endpoint_port=str(self.port),
+                    telemetry_services=self.telemetry_services,
+                    probe=self._memory_probe,
+                    topology_probe=self._topology_probe,
+                    topology_snapshot=self._topology_snapshot,
+                )
             pid = augmented.get("root_pid")
             identity = (pid, _process_start_ticks(pid)) if isinstance(pid, int) else None
             if identity != getattr(self, "_baseline_identity", None):

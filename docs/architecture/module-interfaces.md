@@ -325,6 +325,7 @@ make lint format-check typecheck arch photobench-check check-docs coverage
 |---|---|---|
 | `AlbumSource` | `domain/datasets/ports.py:33` | `manifest/qa_rows/read_file/import_target/integrity/list_album_ids/media_file` |
 | `QaMetadataSource` | `:18` | QA 元数据读取 |
+| `ManagedTelemetryWork` | `domain/runtime/ports.py` | 可选 `start_sampling/stop_sampling`，采样器启动前准备资源，采样线程finally关闭；未退出仍由pending_work报告 |
 | `OwnedTelemetryWork` | `domain/runtime/ports.py` | 可选 `pending_work`，报告仍在运行的探测 |
 | `CancellableOperations` | `domain/sentrix/ports.py` | 可选 `cancel_operation`，请求并复查产品协作取消 |
 | `SentrixClient` | `domain/sentrix/ports.py:59` | 主产品 HTTP 语义端口（`API_PREFIX="/api/v1"`） |
