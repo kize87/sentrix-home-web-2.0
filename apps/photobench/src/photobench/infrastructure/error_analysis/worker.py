@@ -22,18 +22,22 @@ def source(root: Path, run_id: str) -> dict[str, Any]:
     directory = root / run_id
     with run_lock(directory):
         rows = committed_path(directory, "results.jsonl")
-        meta = committed_path(directory, "metadata.json")
+        # Resolve the atomic commit pointer once. Rejudge may publish a newer
+        # generation while this worker is reading; all source facts must remain
+        # tied to the generation selected by the result path.
+        selected = rows.parent
+        meta = selected / "metadata.json"
         if meta.is_file():
             state = json.loads(meta.read_text())["overview"]
         else:
             # Legacy state may be large; this runs only in the isolated worker.
-            state = json.loads(committed_path(directory, "run.json").read_text())
+            state = json.loads((selected / "run.json").read_text())
             state.pop("items", None)
-        identity = _identity(directory)
+        identity = _selected_identity(selected)
         runtime = state.get("runtime_snapshot") or {}
         return {
             "run_id": run_id,
-            "path": str(rows if rows.is_file() else committed_path(directory, "run.json")),
+            "path": str(rows if rows.is_file() else selected / "run.json"),
             "format": "jsonl" if rows.is_file() else "legacy_run_json",
             "revision": fingerprint(identity),
             "status": state.get("status"),
@@ -76,9 +80,13 @@ def source(root: Path, run_id: str) -> dict[str, Any]:
 
 
 def _identity(directory: Path) -> list[Any]:
+    return _selected_identity(committed_path(directory, "results.jsonl").parent)
+
+
+def _selected_identity(selected: Path) -> list[Any]:
     facts: list[Any] = []
     for name in ("results.jsonl", "metadata.json", "run.json"):
-        path = committed_path(directory, name)
+        path = selected / name
         if path.is_file():
             stat = path.stat()
             facts.append([str(path), stat.st_ino, stat.st_size, stat.st_mtime_ns])

@@ -473,3 +473,26 @@ def test_tool_internal_model_is_attributed_to_tool_and_not_main_agent():
     event = next(e for e in c["events"] if e["code"] == "model_output_format")
     assert event["role"] == "tool_internal" and event["step_id"] == "tool1"
     assert c["model_calls"] == 0 and c["tool_calls"] == 1
+
+
+def test_snapshot_pointer_change_cannot_mix_metadata_and_results(tmp_path, monkeypatch):
+    from photobench.infrastructure.error_analysis import worker
+    from photobench.infrastructure.results.store import write_committed_snapshot
+
+    directory = tmp_path / "r"
+    write_committed_snapshot(directory, {"run_id": "r", "status": "completed", "items": [item()]})
+    old_rows = worker.committed_path(directory, "results.jsonl")
+    write_committed_snapshot(directory, {"run_id": "r", "status": "failed", "items": []})
+    actual = worker.committed_path
+    reads = 0
+
+    def flip(run_dir, name):
+        nonlocal reads
+        reads += 1
+        return old_rows if reads == 1 else actual(run_dir, name)
+
+    monkeypatch.setattr(worker, "committed_path", flip)
+    selected = worker.source(tmp_path, "r")
+    assert selected["status"] == "completed"
+    assert selected["path"] == str(old_rows)
+    assert selected["revision"] != worker.revision(tmp_path, "r")
