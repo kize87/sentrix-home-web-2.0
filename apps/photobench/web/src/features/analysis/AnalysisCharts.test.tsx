@@ -45,16 +45,16 @@ it("轮询相同统计、修改筛选及仅来源变化时不重绘；真实统�
   };
   const first = vi.fn(), latest = vi.fn();
   const view = render(<AnalysisCharts report={report} filter={first} />);
-  expect(init).toHaveBeenCalledTimes(5);
-  expect(chart.setOption).toHaveBeenCalledTimes(5);
+  expect(init).toHaveBeenCalledTimes(4);
+  expect(chart.setOption).toHaveBeenCalledTimes(4);
   for (let poll = 0; poll < 12; poll++) {
     const refreshed = structuredClone(report);
     refreshed.source = { stale: poll % 2 === 0 };
     view.rerender(<AnalysisCharts report={refreshed} filter={latest} />);
   }
-  expect(chart.setOption).toHaveBeenCalledTimes(5);
+  expect(chart.setOption).toHaveBeenCalledTimes(4);
   expect(chart.dispose).not.toHaveBeenCalled();
-  const clickHeatmap = chart.on.mock.calls[3]?.[1] as (e: {name: string; value: number[]}) => void;
+  const clickHeatmap = chart.on.mock.calls[2]?.[1] as (e: {name: string; value: number[]}) => void;
   act(() => clickHeatmap({name: "", value: [0, 0, 1]}));
   expect(latest).toHaveBeenCalledWith(expect.objectContaining({code: "context_soft_limit", question_type: "fact"}));
   expect(first).not.toHaveBeenCalled();
@@ -62,7 +62,7 @@ it("轮询相同统计、修改筛选及仅来源变化时不重绘；真实统�
   changed.errors[0]!.affected_items = 2;
   changed.heatmap[0]!.count = 2;
   view.rerender(<AnalysisCharts report={changed} filter={latest} />);
-  expect(chart.setOption).toHaveBeenCalledTimes(7);
+  expect(chart.setOption).toHaveBeenCalledTimes(6);
   expect(chart.setOption.mock.calls.at(-1)?.[0].series[0].data).toEqual([[0, 0, 2]]);
   expect(chart.setOption.mock.calls.every(([option]) => option.animation === false)).toBe(true);
 });
@@ -88,4 +88,27 @@ it("默认任务类型展示正确/部分/错误/未评分，点击类别与分�
   fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "angle"}});
   fireEvent.click(screen.getByLabelText("时间 部分答对（1分）"));
   expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({angle: "time", score: "1", task_type: ""}));
+});
+
+it("合并后的媒体检索与行为分类显示中文，窄柱段数字保留在表格", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const report = {
+    item_count: 174, counts: {}, denominators: {turns: 174, turn_quality_valid: 174},
+    groups: {task_type: [
+      {value: "behavior", total: 129, score_2: 28, score_1: 40, score_0: 60, score_None: 1},
+      {value: "T1_retrieve_media", total: 45, score_2: 2, score_1: 3, score_0: 40},
+    ]}, errors: [], heatmap: [], behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  const filter = vi.fn();
+  render(<AnalysisCharts report={report} filter={filter} />);
+  expect(screen.getAllByText("媒体检索")).toHaveLength(1);
+  expect(screen.getByText("行为判断")).toBeTruthy();
+  expect(screen.queryByText("behavior")).toBeNull();
+  expect(screen.queryByText("怎么读这份报告")).toBeNull();
+  const option = chart.setOption.mock.calls[0]?.[0];
+  expect(option.yAxis.data).toEqual(["行为判断", "媒体检索"]);
+  expect(option.series[0].data[1].label.show).toBe(false);
+  expect(screen.getByLabelText("媒体检索 答对（2分）").textContent).toBe("2");
+  fireEvent.click(screen.getByLabelText("媒体检索 答错（0分）"));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({task_type: "T1_retrieve_media", score: "0"}));
 });

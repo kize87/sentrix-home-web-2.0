@@ -74,14 +74,6 @@ export function AnalysisCharts({ report: r, filter }: {
     code: "", anomaly: "", recovery: "", execution: "", expected_action: "", actual_action: "",
     ...value,
   });
-  const quality: EChartsOption = {
-    tooltip: { trigger: "axis" },
-    grid: { containLabel: true, top: 15, left: 10, right: 45, bottom: 20 },
-    xAxis: { type: "value", minInterval: 1, name: "题" },
-    yAxis: { type: "category", inverse: true, data: scores.map(x => x.label) },
-    series: [{ type: "bar", label: { show: true, position: "right" },
-      data: scores.map(x => ({ name: x.value, value: r.counts[`score_${x.value}`] || 0, itemStyle: { color: x.color } })) }],
-  };
   const distribution: EChartsOption = {
     color: scores.map(x => x.color),
     tooltip: { trigger: "axis" },
@@ -91,9 +83,10 @@ export function AnalysisCharts({ report: r, filter }: {
       axisLabel: { formatter: ratio ? "{value}%" : "{value}" } },
     yAxis: { type: "category", inverse: true, data: rows.map(x => displayLabel(x.value)) },
     series: scores.map(s => ({
+      labelLayout: { hideOverlap: true },
       name: s.label, type: "bar", stack: "scores", label: { show: true, formatter: "{c}" },
       data: rows.map(x => ({ name: JSON.stringify([x.value, s.value]),
-        value: ratio ? Number((Number(x[`score_${s.value}`] || 0) / Math.max(1, x.total) * 100).toFixed(1)) : Number(x[`score_${s.value}`] || 0), label: { show: Number(x[`score_${s.value}`] || 0) > 0, formatter: ratio ? "{c}%" : "{c}" } })),
+        value: ratio ? Number((Number(x[`score_${s.value}`] || 0) / Math.max(1, x.total) * 100).toFixed(1)) : Number(x[`score_${s.value}`] || 0), label: { show: Number(x[`score_${s.value}`] || 0) / Math.max(1, ratio ? x.total : Math.max(...rows.map(row => row.total))) >= 0.035, formatter: ratio ? "{c}%" : "{c}" } })),
     })),
   };
   const errorOption: EChartsOption = {
@@ -122,22 +115,8 @@ export function AnalysisCharts({ report: r, filter }: {
     series: [{ type: "heatmap", label: { show: true }, data: r.behavior_matrix.map(x => [actions.indexOf(x.actual), actions.indexOf(x.expected), x.count]) }],
   };
   return <>
-    <div className="analysis-grid analysis-overview">
-      <article>
-        <h4>回答结果 · 全部 {r.item_count} 题</h4>
-        <p>有效评分 {r.denominators.quality_valid} 题，未评分 {r.denominators.quality_missing} 题。点击条形查看对应题目。</p>
-        <AnalysisChart label="回答结果分布" option={quality} height={250} onClick={name => selectGroup({ score: name })} />
-      </article>
-      <article className="analysis-reading-guide">
-        <h4>怎么读这份报告</h4>
-        <p><b>绿色答对，黄色部分答对，红色答错，灰色未评分。</b>这些分类覆盖全部题目，未评分题不会被当成答错。</p>
-        <p>答对率 = 2分题数 ÷ 有效评分题数。部分答对单独展示。</p>
-        <p>运行异常单独统计：一题可能先超时、后恢复并答对。异常题数和错题数不能相加。</p>
-        <p>图表始终展示本轮全部题目；点击图表只筛选下方案例。多轮细节与行为判定在进阶分析中查看。</p>
-      </article>
-    </div>
     <article className="analysis-distribution">
-      <h4>哪些题答对了，哪些题还需改进？</h4>
+      <h4>分类表现</h4>
       <div className="analysis-toolbar">
         <label>分组方式<select aria-label="分布分组方式" value={dimension} onChange={e => setDimension(e.target.value)}>
           {Object.entries(dimensions).filter(([key]) => key !== "expected_action").map(([key, label]) => <option key={key} value={key}>{label}</option>)}
@@ -146,7 +125,7 @@ export function AnalysisCharts({ report: r, filter }: {
           <option value="count">题数</option><option value="ratio">组内占比</option>
         </select></label>
       </div>
-      <p>按数据集已标注的{dimensions[dimension]}分组，包含答对和答错的全部题目；缺少分类显示为未标注。多标签题可出现在多组，组间题数可能重叠。</p>
+      {rows.reduce((n, row) => n + row.total, 0) > r.item_count && <p className="analysis-hint">一题可属于多类，各类题数有重叠。</p>}
       {rows.length ? <>
         <AnalysisChart label="分类答对答错分布" option={distribution} height={Math.max(270, rows.length * 42 + 95)} onClick={name => {
           const value: unknown = JSON.parse(name);
@@ -162,27 +141,27 @@ export function AnalysisCharts({ report: r, filter }: {
             <td>{percent(Number(row.score_2 || 0), valid)} / {valid}题</td>
           </tr>})}</tbody>
         </table></div>
-      </> : <p>本报告没有记录{dimensions[dimension]}分类。可切换其他维度，未标注的历史题目不自动猜测分类。</p>}
+      </> : <p>暂无{dimensions[dimension]}分类。</p>}
     </article>
     <details className="analysis-advanced">
       <summary>进阶排查：运行异常与行为预期</summary>
-      <p>这里统计调用、工具与评分过程中的异常，包含最终答对的题。不是错题分类。</p>
+      <p>异常统计包含最终答对的题。</p>
       <div className="analysis-grid">
         <article><h4>运行异常分布 · 点击筛选</h4><p>全部 {r.item_count} 题中，{r.counts.affected_items || 0}题发生过异常，共 {r.counts.events || 0} 次；类别可重叠。</p>
           {!errors.length && <p>未记录到运行异常。</p>}
           <AnalysisChart label="错误分布" option={errorOption} onClick={name => selectGroup({ code: errors.find(x => x.label === name)?.code || "", score: "" })} />
         </article>
-        <article><h4>题目形式 × 运行异常</h4><p>数字是发生该类异常的题数；缺轨迹 {r.counts.missing_trace || 0}题。</p>
+        <article><h4>题型与运行异常</h4><p>缺轨迹 {r.counts.missing_trace || 0}题。</p>
           <AnalysisChart label="题型错误热力图" option={heatmap} onClick={(_, value) => {
             if (Array.isArray(value)) selectGroup({ code: es[Number(value[0])], question_type: qs[Number(value[1])], score: "" });
           }} />
         </article>
       </div>
       <h4>对话轮级评分</h4>
-      <p>共 {r.denominators.turns} 轮，有效评分 {r.denominators.turn_quality_valid} 轮，未评分 {r.denominators.turns - r.denominators.turn_quality_valid} 轮。这里每轮计一次，多轮对话不会与上方题数混算。</p>
+      <p>共 {r.denominators.turns} 轮，有效评分 {r.denominators.turn_quality_valid} 轮，未评分 {r.denominators.turns - r.denominators.turn_quality_valid} 轮。</p>
       <table><thead><tr>{scores.map(s => <th key={s.value}>{s.label}</th>)}</tr></thead><tbody><tr>{scores.map(s => <td key={s.value}>{r.counts[`turn_score_${s.value}`] || 0}轮</td>)}</tr></tbody></table>
       <h4>行为预期 × 实际 · 点击筛选</h4>
-      <p>逐轮统计：共 {r.denominators.turns} 轮，有效行为判定 {r.denominators.behavior_valid} 轮，缺失 {r.denominators.behavior_missing} 轮。未出现的行为属于未覆盖。</p>
+      <p>有效判定 {r.denominators.behavior_valid} 轮，未判定 {r.denominators.behavior_missing} 轮。</p>
       <AnalysisChart label="行为混淆矩阵" option={matrix} onClick={(_, value) => {
         if (Array.isArray(value)) selectGroup({ actual_action: actions[Number(value[0])], expected_action: actions[Number(value[1])], score: "" });
       }} />

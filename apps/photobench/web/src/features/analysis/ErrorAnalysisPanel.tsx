@@ -125,20 +125,20 @@ function CaseCard({
       <p>{c.answer || "未记录"}</p>
       {c.text_truncated && <p>当前为截短摘要，完整内容可读取原始轨迹。</p>}
       <p>
-        数据缺口：{c.missing.join("、") || "未发现"}；检索/交付定位信号：
-        {c.signals.join("、") || "无已知信号"}
+        数据缺口：{c.missing.map(displayLabel).join("、") || "未发现"}；检索/交付定位信号：
+        {c.signals.map(displayLabel).join("、") || "无已知信号"}
       </p>
       {c.turns.map((t) => (
         <div key={t.turn}>
           第{t.turn + 1}轮：预期 {t.expected ? displayLabel(t.expected) : "未记录"} → 实际{" "}
-          {t.actual ? displayLabel(t.actual) : "未记录"}；结束原因 {t.termination_reason || "未记录"}
+          {t.actual ? displayLabel(t.actual) : "未记录"}；结束原因 {t.termination_reason ? displayLabel(t.termination_reason) : "未记录"}
           <p>{t.judge_reason}</p>
         </div>
       ))}
       <ol>
         {c.events.map((e) => (
           <li key={e.event_id} id={`analysis-${e.event_id}`}>
-            <b>{e.label}</b> · {e.recovery} · {e.role || "角色未记录"}
+            <b>{e.label}</b> · {displayLabel(e.recovery)} · {e.role ? displayLabel(e.role) : "角色未记录"}
             <p>{e.message}</p>
             <small>
               证据 {e.event_id} · {e.source} · 分类依据 {e.basis}
@@ -511,7 +511,7 @@ export function ErrorAnalysisPanel({
           {!terminal && <p>测评和采样退出后自动分析；历史运行可手动生成。</p>}
           {job?.stale && (
             <p className="error">
-              来源已变化，报告已过期。请重新生成后对比或诊断。
+              报告需更新，请重新生成后查看。
             </p>
           )}
           {(error || job?.error) && (
@@ -528,7 +528,7 @@ export function ErrorAnalysisPanel({
                     className="btn compact"
                     onClick={() => void openHistory(h)}
                   >
-                    {h.kind} · {status[h.status] || h.status} ·{" "}
+                    {({rules: "统计报告", compare: "逐题对比", ai: "AI分析"} as Record<string, string>)[h.kind || ""]} · {status[h.status] || h.status} ·{" "}
                     {h.created_at
                       ? new Date(h.created_at * 1000).toLocaleString()
                       : h.job_id}
@@ -540,20 +540,20 @@ export function ErrorAnalysisPanel({
           {r && (
             <>
               <h3>本轮答题表现</h3>
-              <p className="analysis-lead">分析范围是本轮全部 <b>{r.item_count}</b> 题，包含答对、部分答对、答错和未评分。答对率 <b>{percent(r.counts.score_2 || 0, r.denominators.quality_valid)}</b>（{r.counts.score_2 || 0}/{r.denominators.quality_valid}题有效评分）。</p>
+              <p className="analysis-lead">答对率 <b>{percent(r.counts.score_2 || 0, r.denominators.quality_valid)}</b> · 有效评分 {r.denominators.quality_valid}/{r.item_count} 题</p>
               <div className="analysis-stats">
-                <button className="analysis-stat" onClick={() => { setFilters({}); setPage(1); setSelected([]); setSelectionNote(""); }}><span>全部题目</span><strong>{r.item_count}</strong><small>点击查看全部</small></button>
+                <button className="analysis-stat" onClick={() => { setFilters({}); setPage(1); setSelected([]); setSelectionNote(""); }}><span>全部题目</span><strong>{r.item_count}</strong></button>
                 {scores.map(score => <button key={score.value} className={`analysis-stat outcome-${score.value}`} onClick={() => { setFilters({ score: score.value }); setPage(1); setSelected([]); setSelectionNote(""); }}>
                   <span>{score.label}</span><strong>{r.counts[`score_${score.value}`] || 0}</strong><small>占全部题目 {percent(r.counts[`score_${score.value}`] || 0, r.item_count)}</small>
                 </button>)}
               </div>
               <div className="analysis-runtime-summary">
-                <b>运行过程（与回答对错分别统计）</b>
+                <b>运行情况</b>
                 <span>发生过异常 {r.counts.affected_items || 0}题</span><span>全部异常已恢复 {r.counts.fully_recovered_items || 0}题</span>
                 <span>最终执行失败 {r.counts.execution_failed || 0}题</span><span>取消 {r.counts.execution_cancelled || 0}题</span>
               </div>
               <p>
-                范围：{String(r.source.status)} ·{" "}
+                {status[String(r.source.status)] || displayLabel(String(r.source.status))} ·{" "}
                 {r.source.mode === "build"
                   ? "仅导入与处理阶段"
                   : `${r.item_count}题`}{" "}
@@ -592,7 +592,7 @@ export function ErrorAnalysisPanel({
               </details>
               <AnalysisCharts report={r} filter={filter} />
               <details>
-                <summary>题目覆盖全部维度</summary>
+                <summary>全部分类明细</summary>
                 {Object.entries(r.groups).map(([dim, rows]) => (
                   <div key={dim}>
                     <h4>{dimensions[dim] || dim}</h4>
@@ -619,22 +619,23 @@ export function ErrorAnalysisPanel({
                   </div>
                 ))}
               </details>
-              <h4>检索与交付定位信号</h4>
+              <details>
+              <summary>检索与交付</summary>
               <p>
-                检索有效GT {r.counts.candidate_valid_items || 0}题；交付有效GT{" "}
-                {r.counts.delivery_valid_items || 0}题；缺GT不判失败。
+                检索有参考答案 {r.counts.candidate_valid_items || 0}题；交付有参考答案{" "}
+                {r.counts.delivery_valid_items || 0}题。
               </p>
               <p>
                 候选未命中 {r.counts.candidate_miss || 0}题 · 候选命中但未交付{" "}
                 {r.counts.candidate_hit_not_delivered || 0}题 · 已交付但回答低分{" "}
                 {r.counts.delivered_low_score || 0}题
               </p>
-              <h3>查看具体题目</h3>
-              <p>图表展示全部题目，以下列表按条件筛选；所有条件同时生效。可查看正确案例，也可定位未完全答对或运行异常的题目。</p>
+              </details>
+              <h3>题目列表</h3>
               <div className="analysis-toolbar">
                 {Object.entries(filterOptions).filter(([key]) => ["score", "task_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}
                 <details className="analysis-extra-filters">
-                  <summary>更多筛选（题目形式、角度、难度、行为等）{Object.entries(filters).filter(([key, value]) => value && !["score", "task_type", "code"].includes(key)).length > 0 ? " · 已设置" : ""}</summary>
+                  <summary>更多筛选{Object.entries(filters).filter(([key, value]) => value && !["score", "task_type", "code"].includes(key)).length > 0 ? " · 已设置" : ""}</summary>
                   <div className="analysis-toolbar">{Object.entries(filterOptions).filter(([key]) => !["score", "task_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}</div>
                 </details>
                 <button
@@ -660,11 +661,11 @@ export function ErrorAnalysisPanel({
                 <button className="btn compact" disabled={pending || !!job?.stale || !diagnosed.length} onClick={() => void chooseBatch({}, "下一批未分析题", true)}>选择下一批未分析题</button>
                 <button className="btn compact" onClick={() => { setSelected([]); setSelectionNote(""); }}>清空选择</button>
               </div>
-              <p className="analysis-hint">快捷选择保留分类等筛选，并使用对应的回答或异常条件，替换本批选择；“未完全答对”包含0/1分，“运行异常”也可能包含答对题。每批最多20题，可继续下一批。</p>
+              <p className="analysis-hint">批量选择沿用当前分类，每批最多20题。异常题可能答对。</p>
               {selectionNote && <p role="status">{selectionNote}</p>}
               <h3>AI 辅助分析</h3>
               <p>
-                先用上方快捷按钮批量选题，再选分析模型。当前已选 {selected.length} 题；默认关闭，确认后才发送证据，每批最多20题，并发1。AI建议单独展示，不改原分数。
+                已选 {selected.length} 题，选择模型后确认开始。
               </p>
               <div className="analysis-toolbar">
                 <select
@@ -694,7 +695,7 @@ export function ErrorAnalysisPanel({
                 </button>
               </div>
               <h3>两轮逐题对比</h3>
-              <p>以当前这轮为基准，选择另一轮历史测评。系统按题目与GT配对，说明改善、退步和不可比范围；另一轮缺少有效报告时，会先自动生成。</p>
+              <p>选择另一轮，与本轮逐题比较。</p>
               <ComparisonPicker runId={runId} value={otherRun} onChange={setOtherRun} disabled={pending || !!preparingOther || activeAnalysis(compare)} />
               <div className="analysis-toolbar">
                 <button className="btn compact" disabled={pending || !!job?.stale || !otherRun || !!preparingOther || activeAnalysis(compare)} onClick={() => void compareRuns()}>创建对比报告</button>
@@ -784,8 +785,8 @@ export function ErrorAnalysisPanel({
                           分数变化 {row.score_delta ?? "未知"}
                         </summary>
                         <p>
-                          GT变化 {String(row.gt_changed)}；执行状态变化{" "}
-                          {String(row.execution_changed)}；新增异常{" "}
+                          参考答案变化 {row.gt_changed ? "有" : "无"}；执行状态变化{" "}
+                          {row.execution_changed ? "有" : "无"}；新增异常{" "}
                           {row.errors_added.join("、") || "无"}；消失异常{" "}
                           {row.errors_removed.join("、") || "无"}
                         </p>

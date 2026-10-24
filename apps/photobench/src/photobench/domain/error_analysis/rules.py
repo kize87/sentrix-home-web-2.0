@@ -8,9 +8,10 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from photobench.domain.error_analysis.taxonomy import category_value
 from photobench.domain.runs.analysis import judge_score_for_summary
 
-RULE_VERSION = 2
+RULE_VERSION = 3
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -366,6 +367,10 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         else [str(item.get(k) or "unknown")]
         for k in DIMENSIONS
     }
+    dimension_labels = {
+        k: list(dict.fromkeys(category_value(k, value) for value in values))
+        for k, values in dimension_labels.items()
+    }
     dimensions = {k: " / ".join(values) for k, values in dimension_labels.items()}
     dimensions.update(
         media_type="mixed" if len(media) > 1 else next(iter(media), "unknown"),
@@ -620,7 +625,9 @@ def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
             continue
         if k == "expected_action" or k == "actual_action":
             continue
-        if k in DIMENSIONS and v not in case["dimension_labels"].get(k, []):
+        if k in DIMENSIONS and category_value(k, str(v)) not in {
+            category_value(k, value) for value in case["dimension_labels"].get(k, [])
+        }:
             return False
         if k == "code" and v not in {e["code"] for e in case["events"]}:
             return False

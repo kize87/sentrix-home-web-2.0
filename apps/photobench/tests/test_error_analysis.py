@@ -545,3 +545,62 @@ def test_quality_and_classification_filters_include_correct_and_partial_without_
     assert r["counts"]["score_2"] == 1 and r["counts"]["affected_items"] == 1
     assert r["denominators"]["quality_valid"] == 3
     assert r["groups"]["task_type"][0]["score_2"] == 1
+
+
+def test_task_aliases_merge_before_counting_and_filters_exports_share_the_category():
+    raw = [
+        item(qa_id="a", task_type="T1_retrieve_media", judge={"score": 2}),
+        item(qa_id="b", task_type="T1_media_retrieval", judge={"score": 0}),
+        item(qa_id="c", task_type=["T1_retrieve_media", "T1_media_retrieval"], judge={"score": 1}),
+        item(qa_id="d", task_type="behavior", judge={"score": None}),
+    ]
+    before = copy.deepcopy(raw)
+    cases = [case_from_item(row, i) for i, row in enumerate(raw)]
+    r = report(cases)
+    assert raw == before
+    assert r["rule_version"] == 3
+    media, behavior = r["groups"]["task_type"]
+    assert media == {
+        "value": "T1_retrieve_media",
+        "total": 3,
+        "failed": 0,
+        "score_2": 1,
+        "score_0": 1,
+        "score_1": 1,
+    }
+    assert behavior["total"] == 1 and r["item_count"] == 4
+    assert cases[2]["dimension_labels"]["task_type"] == ["T1_retrieve_media"]
+    for alias in ["T1_retrieve_media", "T1_media_retrieval", "媒体检索"]:
+        selected = [c for c in cases if matches(c, {"task_type": alias})]
+        assert len(selected) == 3
+        assert len(json.loads(export_report(r, selected, "json", {"task_type": alias}))["cases"]) == 3
+    # Old saved case indices and links are also matched by the same category.
+    legacy = copy.deepcopy(cases[0])
+    legacy["dimension_labels"]["task_type"] = ["T1_media_retrieval"]
+    assert matches(legacy, {"task_type": "T1_retrieve_media"})
+    # Task aliases must not collapse distinct question forms or GT definitions.
+    assert cases[0]["identity"] != cases[1]["identity"]
+    assert (
+        case_from_item(item(question_type="media_retrieval"), 0)["dimensions"]["question_type"]
+        == "media_retrieval"
+    )
+
+
+def test_old_category_rule_report_is_stale_without_changing_saved_artifacts(tmp_path: Path):
+    write_run(tmp_path)
+    backend = FileAnalysisBackend(tmp_path)
+    backend.start(lambda: False)
+    try:
+        job = backend.submit("r", "rules", {})
+        done = await_job(backend, job["job_id"])
+        assert not done["stale"]
+        path = backend.artifacts / job["job_id"] / "report.json"
+        saved = json.loads(path.read_text())
+        saved["rule_version"] = 2
+        atomic(path, saved)
+        original = path.read_bytes()
+        assert backend.latest("r")["stale"]
+        assert backend.result(job["job_id"])["stale"]
+        assert path.read_bytes() == original
+    finally:
+        backend.close()

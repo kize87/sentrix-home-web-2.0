@@ -30,7 +30,7 @@ export function ComparisonPicker({ runId, value, onChange, disabled }: {
     return () => { alive = false; abort.abort(); };
   }, [page, runId, retry]);
   const candidates = runs.filter(run => run.run_id !== runId && run.mode !== "build" && terminalStates.includes(run.status || ""));
-  const caption = (run: Run) => `${run.started_at || run.created_at || run.run_id} · ${run.model_name || run.model_profile || "模型未记录"} · ${run.qa_name || run.qa_set || "题集未记录"} · ${run.run_id}`;
+  const caption = (run: Run) => `${(run.started_at || run.created_at) ? new Date((run.started_at || run.created_at)!).toLocaleString("zh-CN", {month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"}) : "日期未记录"} · ${run.model_name || run.model_profile || "模型未记录"} · ${run.qa_name || run.qa_set || "题集未记录"} · ${run.run_id}`;
   const visible = candidates.filter(run => run.run_id === value || caption(run).toLowerCase().includes(search.toLowerCase()));
   return <div className="analysis-toolbar analysis-run-picker">
     <label>查找历史运行<input aria-label="搜索对比运行" placeholder="搜索已加载的日期、模型或题集" value={search} onChange={e => setSearch(e.target.value)} /></label>
@@ -41,6 +41,6 @@ export function ComparisonPicker({ runId, value, onChange, disabled }: {
     {more && <button className="btn compact" disabled={loading} onClick={() => setPage(p => p + 1)}>加载更早记录</button>}
     {loading && <span role="status">读取历史运行…</span>}
     {error && <p role="alert">历史运行读取失败：{error} <button className="btn compact" onClick={() => setRetry(n => n + 1)}>重试</button></p>}
-    {!loading && !error && <small>已加载 {runs.length} 条记录，可选 {candidates.length} 轮；仅显示已结束的测评，排除本轮和仅构建任务。</small>}
+    {!loading && !error && <small>可选 {candidates.length} 轮测评{more ? "，可加载更早记录" : ""}</small>}
   </div>;
 }

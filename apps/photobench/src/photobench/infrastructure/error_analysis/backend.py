@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from photobench.domain.error_analysis.exports import export_auxiliary, export_report
-from photobench.domain.error_analysis.rules import matches
+from photobench.domain.error_analysis.rules import RULE_VERSION, matches
 from photobench.infrastructure.error_analysis.worker import atomic, lines, revision, run_worker
 
 ACTIVE = {"queued", "running", "cancelling", "paused"}
@@ -212,7 +212,10 @@ class FileAnalysisBackend:
                 return True
         try:
             report = json.loads((self._directory(job["job_id"]) / "report.json").read_text())
-            return bool(report["source"]["revision"] != revision(self.root, job["run_id"]))
+            return bool(
+                report.get("rule_version") != RULE_VERSION
+                or report["source"]["revision"] != revision(self.root, job["run_id"])
+            )
         except (OSError, ValueError, KeyError):
             return True
 

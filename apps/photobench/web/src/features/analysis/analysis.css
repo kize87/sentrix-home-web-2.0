@@ -130,9 +130,7 @@
 .analysis-stat.outcome-1 { border-top-color: #ba8527; background: #fff9ec; }
 .analysis-stat.outcome-0 { border-top-color: #c35550; background: #fff3f2; }
 .analysis-stat.outcome-None { border-top-color: #929baa; }
-.analysis-runtime-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; font-size: 13px; padding: 12px 16px; background: #f3f6f8; border-radius: 8px; }
-.analysis-reading-guide { background: #f5f8fb; }
-.analysis-reading-guide p { margin: 12px 0; }
+.analysis-runtime-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; font-size: 14px; padding: 12px 16px; background: #f3f6f8; border-radius: 8px; }
 .analysis-distribution { margin: 20px 0; padding: 16px; border: 1px solid #dbe3ea; border-radius: 8px; }
 .analysis-table-scroll { overflow-x: auto; }
 .analysis-table-scroll caption { text-align: left; font-size: 13px; color: #60758a; padding: 8px 0; }
