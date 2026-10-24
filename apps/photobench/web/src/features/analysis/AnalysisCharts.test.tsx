@@ -112,3 +112,57 @@ it("合并后的媒体检索与行为分类显示中文，窄柱段数字保留�
   fireEvent.click(screen.getByLabelText("媒体检索 答错（0分）"));
   expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({task_type: "T1_retrieve_media", score: "0"}));
 });
+
+it("按得分看题型按题数排序，占比以该得分全部题为分母，图表和表格可查看案例", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const report = {
+    item_count: 20, counts: {score_2: 5, score_0: 15}, denominators: {},
+    groups: {task_type: [
+      {value: "T1_retrieve_media", total: 11, score_2: 1, score_0: 10},
+      {value: "behavior", total: 8, score_2: 3, score_0: 5},
+      {value: "unknown", total: 1, score_2: 1},
+    ]}, errors: [], heatmap: [], behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  const filter = vi.fn();
+  render(<AnalysisCharts report={report} filter={filter} />);
+  fireEvent.click(screen.getByRole("button", {name: "按得分看题型"}));
+  expect(screen.getByText("答对（2分） · 共5题")).toBeTruthy();
+  expect(screen.getByText("60.0%")).toBeTruthy();
+  expect(screen.getAllByText("20.0%")).toHaveLength(2);
+  const scoreOption = () => chart.setOption.mock.calls.filter(([option]) => option.legend?.show === false).at(-1)![0];
+  expect(scoreOption().yAxis.data).toEqual(["行为判断", "媒体检索", "未标注／未知"]);
+  expect(scoreOption().series[0].data.map((x: {value: number}) => x.value)).toEqual([3, 1, 1]);
+  fireEvent.click(screen.getByRole("button", {name: "行为判断 答对（2分）案例"}));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({task_type: "behavior", score: "2"}));
+  fireEvent.change(screen.getByLabelText("分布显示方式"), {target: {value: "ratio"}});
+  expect(scoreOption().series[0].data.map((x: {value: number}) => x.value)).toEqual([60, 20, 20]);
+  fireEvent.change(screen.getByLabelText("分布得分"), {target: {value: "0"}});
+  expect(scoreOption().yAxis.data).toEqual(["媒体检索", "行为判断"]);
+  expect(screen.getByText("66.7%")).toBeTruthy();
+  const click = chart.on.mock.calls.at(-1)![1] as (e: {name: string; value: number}) => void;
+  act(() => click({name: "T1_retrieve_media", value: 66.7}));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({task_type: "T1_retrieve_media", score: "0"}));
+  expect(chart.setOption.mock.calls.every(([, options]) => options.replaceMerge.includes("series"))).toBe(true);
+  fireEvent.click(screen.getByRole("button", {name: "按题型看得分"}));
+  expect(screen.queryByLabelText("分布得分")).toBeNull();
+  expect(chart.setOption.mock.calls.at(-1)![0].series).toHaveLength(4);
+});
+
+it("所选得分无题、分类缺失及多标签重叠如实展示，不用全部题数计算比例", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const report = {item_count: 5, counts: {score_2: 2, score_1: 1}, denominators: {},
+    groups: {task_type: [{value: "T2_fact_qa", total: 2, score_2: 2}, {value: "T5_event_summary", total: 1, score_2: 1}], angle: []},
+    errors: [], heatmap: [], behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  render(<AnalysisCharts report={report} filter={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", {name: "按得分看题型"}));
+  expect(screen.getByText("100.0%")).toBeTruthy();
+  expect(screen.getByText("50.0%")).toBeTruthy();
+  expect(screen.getByText("一题可属于多类，各类占比合计可能超过100%。")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("分布得分"), {target: {value: "None"}});
+  expect(screen.getByText("本轮没有未评分的题目。")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("分布得分"), {target: {value: "1"}});
+  expect(screen.getByText("这些题未记录任务类型。")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "angle"}});
+  expect(screen.getByText("这些题未记录考察角度。")).toBeTruthy();
+});
