@@ -193,6 +193,7 @@ export function ErrorAnalysisPanel({
     page: 1,
     page_size: 20,
   });
+  const caseHeading = useRef<HTMLHeadingElement>(null);
   const selectionEpoch = useRef(0);
   useEffect(() => { selectionEpoch.current++; }, [filters, job?.job_id]);
   const [casesLoading, setCasesLoading] = useState(false);
@@ -320,9 +321,14 @@ export function ErrorAnalysisPanel({
     return () => { alive = false; window.clearTimeout(timer); };
   }, [open, preparingOther, job?.job_id, runId]);
   const r = job?.status === "completed" ? job.report : undefined;
-  function filter(v: AnalysisFilters) {
-    setFilters((old) => ({ ...old, ...v }));
+  function filter(v: AnalysisFilters, replace = false) {
+    setFilters((old) => replace ? v : { ...old, ...v });
     setPage(1); setCasesLoading(true); setSelected([]); setSelectionNote("");
+  }
+  function browseCases(value: AnalysisFilters) {
+    filter(value, true);
+    caseHeading.current?.focus({ preventScroll: true });
+    caseHeading.current?.scrollIntoView({ block: "start", behavior: "instant" });
   }
   async function act(fn: () => Promise<void>) {
     setPending(true);
@@ -542,8 +548,8 @@ export function ErrorAnalysisPanel({
               <h3>本轮答题表现</h3>
               <p className="analysis-lead">答对率 <b>{percent(r.counts.score_2 || 0, r.denominators.quality_valid)}</b> · 有效评分 {r.denominators.quality_valid}/{r.item_count} 题</p>
               <div className="analysis-stats">
-                <button className="analysis-stat" onClick={() => { setFilters({}); setPage(1); setSelected([]); setSelectionNote(""); }}><span>全部题目</span><strong>{r.item_count}</strong></button>
-                {scores.map(score => <button key={score.value} className={`analysis-stat outcome-${score.value}`} onClick={() => { setFilters({ score: score.value }); setPage(1); setSelected([]); setSelectionNote(""); }}>
+                <button className="analysis-stat" onClick={() => browseCases({})}><span>全部题目</span><strong>{r.item_count}</strong></button>
+                {scores.map(score => <button key={score.value} className={`analysis-stat outcome-${score.value}`} onClick={() => browseCases({ score: score.value })}>
                   <span>{score.label}</span><strong>{r.counts[`score_${score.value}`] || 0}</strong><small>占全部题目 {percent(r.counts[`score_${score.value}`] || 0, r.item_count)}</small>
                 </button>)}
               </div>
@@ -590,7 +596,7 @@ export function ErrorAnalysisPanel({
                   })}
                 </pre>
               </details>
-              <AnalysisCharts report={r} filter={filter} />
+              <AnalysisCharts report={r} filter={browseCases} />
               <details>
                 <summary>全部分类明细</summary>
                 {Object.entries(r.groups).map(([dim, rows]) => (
@@ -631,7 +637,7 @@ export function ErrorAnalysisPanel({
                 {r.counts.delivered_low_score || 0}题
               </p>
               </details>
-              <h3>题目列表</h3>
+              <h3 ref={caseHeading} tabIndex={-1} className="analysis-case-heading">题目列表</h3>
               <div className="analysis-toolbar">
                 {Object.entries(filterOptions).filter(([key]) => ["score", "task_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}
                 <details className="analysis-extra-filters">
@@ -649,9 +655,9 @@ export function ErrorAnalysisPanel({
                 </button>
                 {job && <Exports job={job} filters={filters} />}
               </div>
-              <p>
-                筛选命中 {data.total}/{r.item_count}题 · 第{page}页；已选择{" "}
-                {selected.length}/20题用于AI诊断。
+              <p role="status">
+                {casesLoading ? "正在读取筛选结果…" : `筛选命中 ${data.total}/${r.item_count}题 · 第${page}页`}
+                ；已选择 {selected.length}/20题用于AI诊断。
               </p>
               <div className="analysis-toolbar analysis-bulk">
                 <button className="btn compact" disabled={pending || casesLoading || !data.items.length || !!job?.stale} onClick={() => { setSelected(data.items.map(c => c.index)); setSelectionNote("已选择本页全部题目，仅选题，尚未发送给分析模型。"); }}>全选本页</button>
@@ -663,6 +669,39 @@ export function ErrorAnalysisPanel({
               </div>
               <p className="analysis-hint">批量选择沿用当前分类，每批最多20题。异常题可能答对。</p>
               {selectionNote && <p role="status">{selectionNote}</p>}
+              {casesLoading ? null : data.total === 0 ? <p>没有符合当前条件的题目。可清空筛选查看全部。</p> : data.items.map((c) => (
+                <CaseCard
+                  key={`${job?.job_id}-${c.index}`}
+                  c={c}
+                  runId={runId}
+                  selected={selected.includes(c.index)}
+                  toggle={() => {
+                    if (pending) return;
+                    setSelectionNote("");
+                    if (selected.includes(c.index))
+                      setSelected(selected.filter((i) => i !== c.index));
+                    else if (selected.length < 20)
+                      setSelected([...selected, c.index]);
+                    else setError("每批最多20题，可分批继续。");
+                  }}
+                />
+              ))}
+              <div className="analysis-toolbar">
+                <button
+                  className="btn compact"
+                  disabled={casesLoading || page <= 1}
+                  onClick={() => setPage(page - 1)}
+                >
+                  上一页
+                </button>
+                <button
+                  className="btn compact"
+                  disabled={casesLoading || page * 20 >= data.total}
+                  onClick={() => setPage(page + 1)}
+                >
+                  下一页
+                </button>
+              </div>
               <h3>AI 辅助分析</h3>
               <p>
                 已选 {selected.length} 题，选择模型后确认开始。
@@ -700,39 +739,6 @@ export function ErrorAnalysisPanel({
               <div className="analysis-toolbar">
                 <button className="btn compact" disabled={pending || !!job?.stale || !otherRun || !!preparingOther || activeAnalysis(compare)} onClick={() => void compareRuns()}>创建对比报告</button>
                 {preparingOther && <><span role="status">正在准备所选运行的规则报告：{status[preparingOther.status] || preparingOther.status}，完成后自动对比。</span><button className="btn compact" onClick={() => setPreparingOther(null)}>停止等待</button></>}
-              </div>
-              {casesLoading ? <p role="status">正在读取筛选结果…</p> : data.total === 0 ? <p>没有符合当前条件的题目。可清空筛选查看全部。</p> : data.items.map((c) => (
-                <CaseCard
-                  key={`${job?.job_id}-${c.index}`}
-                  c={c}
-                  runId={runId}
-                  selected={selected.includes(c.index)}
-                  toggle={() => {
-                    if (pending) return;
-                    setSelectionNote("");
-                    if (selected.includes(c.index))
-                      setSelected(selected.filter((i) => i !== c.index));
-                    else if (selected.length < 20)
-                      setSelected([...selected, c.index]);
-                    else setError("每批最多20题，可分批继续。");
-                  }}
-                />
-              ))}
-              <div className="analysis-toolbar">
-                <button
-                  className="btn compact"
-                  disabled={casesLoading || page <= 1}
-                  onClick={() => setPage(page - 1)}
-                >
-                  上一页
-                </button>
-                <button
-                  className="btn compact"
-                  disabled={casesLoading || page * 20 >= data.total}
-                  onClick={() => setPage(page + 1)}
-                >
-                  下一页
-                </button>
               </div>
             </>
           )}

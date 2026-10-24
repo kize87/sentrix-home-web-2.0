@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, post } from "../../api/client.ts";
 import type { AnalysisReport } from "../../api/analysis.ts";
 import { ErrorAnalysisPanel } from "./ErrorAnalysisPanel.tsx";
@@ -26,6 +26,8 @@ vi.mock("./AnalysisCharts.tsx", () => ({
     </button>
   ),
 }));
+const scrollIntoView = vi.fn();
+beforeEach(() => { HTMLElement.prototype.scrollIntoView = scrollIntoView; });
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
@@ -239,4 +241,30 @@ it("另一轮无报告时自动准备规则报告，完成后衔接对比", asyn
   await screen.findByText(/正在准备所选运行的规则报告/);
   await waitFor(() => expect(post).toHaveBeenCalledWith("/runs/r/analysis", {kind: "compare", left_job: "j", right_job: "prepared"}), {timeout: 3500});
   expect(post).toHaveBeenCalledWith("/runs/other/analysis", {kind: "rules"});
+});
+
+it("统计点击将焦点和视口移到案例，案例在AI和对比之前；下拉筛选不跳页", async () => {
+  setup();
+  render(<ErrorAnalysisPanel runId="r" terminal />);
+  fireEvent.click(screen.getByText("错误分析 展开"));
+  await screen.findByLabelText("选择 q1");
+  const heading = screen.getByRole("heading", {name: "题目列表"});
+  expect(scrollIntoView).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByText("选择上下文异常柱"));
+  expect(document.activeElement).toBe(heading);
+  expect(scrollIntoView).toHaveBeenCalledWith({block: "start", behavior: "instant"});
+  await waitFor(() => expect(screen.getByRole("status").textContent).toContain("筛选命中 1/1题"));
+  const card = screen.getByLabelText("选择 q1").closest("details")!;
+  for (const title of ["AI 辅助分析", "两轮逐题对比"]) {
+    expect(card.compareDocumentPosition(screen.getByRole("heading", {name: title})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+  const calls = scrollIntoView.mock.calls.length;
+  fireEvent.change(screen.getByLabelText("回答结果"), {target: {value: "0"}});
+  await waitFor(() => expect(api).toHaveBeenCalledWith(expect.stringContaining("score=0")));
+  expect(scrollIntoView).toHaveBeenCalledTimes(calls);
+  fireEvent.click(screen.getByText("全部题目"));
+  expect(document.activeElement).toBe(heading);
+  await waitFor(() => expect(screen.getByLabelText("运行异常类别")).toHaveProperty("value", ""));
+  expect(screen.getByLabelText("回答结果")).toHaveProperty("value", "");
+  expect(post).not.toHaveBeenCalled();
 });
