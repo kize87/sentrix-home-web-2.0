@@ -159,7 +159,7 @@ it("所选得分无题、分类缺失及多标签重叠如实展示，不用全�
   expect(screen.getByText("50.0%")).toBeTruthy();
   expect(screen.getByText("一题可属于多类，各类占比合计可能超过100%。")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("分布得分"), {target: {value: "None"}});
-  expect(screen.getByText("本轮没有未评分的题目。")).toBeTruthy();
+  expect(screen.getByText("当前范围没有未评分的题目。")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("分布得分"), {target: {value: "1"}});
   expect(screen.getByText("这些题未标注内容题型。")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "content_subtype"}});

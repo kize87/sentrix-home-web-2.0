@@ -189,7 +189,7 @@ export function AnalysisCharts({ report: r, filter }: {
               <td>{percent(row.count, scoreBase)}</td>
             </tr>)}</tbody>
           </table></div>
-        </> : <p>{scoreTotal ? `这些题未标注${dimensions[dimension]}。` : `本轮没有${selectedScore.label}的题目。`}</p>}
+        </> : <p>{scoreTotal ? `这些题未标注${dimensions[dimension]}。` : `当前范围没有${selectedScore.label}的题目。`}</p>}
       </> : <>
       {rows.reduce((n, row) => n + row.total, 0) > (unit === "turn" ? r.denominators.turns : r.item_count) && <p className="analysis-hint">一题可属于多类，各类题数有重叠。</p>}
       {rows.length ? <>
