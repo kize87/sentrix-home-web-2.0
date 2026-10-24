@@ -13,20 +13,29 @@ export function AnalysisChart({
   label: string;
 }) {
   const element = useRef<HTMLDivElement>(null);
+  const instance = useRef<ReturnType<typeof echarts.init> | null>(null);
+  const clickHandler = useRef(onClick);
+  useEffect(() => {
+    clickHandler.current = onClick;
+  }, [onClick]);
   useEffect(() => {
     if (!element.current) return;
     const chart = echarts.init(element.current, undefined, { renderer: "svg" });
-    chart.setOption(option);
+    instance.current = chart;
     chart.on("click", (event) => {
-      onClick?.(event.name, event.value);
+      clickHandler.current?.(event.name, event.value);
     });
     const observer = new ResizeObserver(() => chart.resize());
     observer.observe(element.current);
     return () => {
       observer.disconnect();
       chart.dispose();
+      instance.current = null;
     };
-  }, [option, onClick]);
+  }, []);
+  useEffect(() => {
+    instance.current?.setOption(option);
+  }, [option]);
   return (
     <div
       role="img"
