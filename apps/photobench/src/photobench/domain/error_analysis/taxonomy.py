@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from photobench.domain.datasets.qa_taxonomy import SUBTYPE_TASK
+
 TASK_ALIASES = {
     "T1_media_retrieval": "T1_retrieve_media",
     "media_retrieval": "T1_retrieve_media",
@@ -31,7 +33,7 @@ SCENARIOS = {
 }
 QUALITY_DIMENSIONS = (
     "content_type",
-    "angle",
+    "content_subtype",
     "difficulty",
     "answerability",
     "media_type",
@@ -43,8 +45,26 @@ def content_types(tasks: list[str]) -> list[str]:
     values = list(
         dict.fromkeys(TASK_ALIASES.get(v, v) for v in tasks if TASK_ALIASES.get(v, v) in CONTENT_TYPES)
     )
-    return values or ["unknown"]
+    return values or [v for v in tasks if v in {"not_applicable", "pending_review"}] or ["unknown"]
 
 
 def test_scenarios(forms: list[str]) -> list[str]:
     return list(dict.fromkeys(v for v in forms if v in SCENARIOS)) or ["unknown"]
+
+
+def content_subtypes(task: str, subtype: str) -> list[str]:
+    if SUBTYPE_TASK.get(subtype) == task or task == subtype in {"not_applicable", "pending_review"}:
+        return [subtype]
+    return ["unknown"]
+
+
+def scenarios(record: dict[str, object]) -> list[str]:
+    raw = record.get("question_type")
+    values = test_scenarios([str(v) for v in raw] if isinstance(raw, list) else [str(raw or "")])
+    if record.get("injection") is True:
+        values.append("prompt_injection")
+    if record.get("answerability") == "needs_clarification":
+        values.append("clarification")
+    if record.get("answerability") == "insufficient_evidence":
+        values.append("evidence_insufficient")
+    return sorted(set(values) - {"unknown"}) or ["unknown"]

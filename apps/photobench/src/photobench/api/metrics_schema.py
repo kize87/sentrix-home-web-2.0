@@ -129,6 +129,15 @@ class JudgeObservation(BaseModel):
 
 class RunItemObservation(BaseModel):
     model_config = ConfigDict(extra="allow")
+    task_type: str | list[str] | None = None
+    question_type: str | list[str] | None = None
+    expected_action: str | None = None
+    answerability: str | None = None
+    injection: bool | None = None
+    difficulty: str | None = None
+    qa_schema_version: str | None = None
+    taxonomy_version: str | None = None
+    dataset_version: str | None = None
     judge: JudgeObservation | None = None
 
 

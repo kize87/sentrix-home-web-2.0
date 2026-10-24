@@ -146,6 +146,8 @@ def filters(
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
     content_type: str = "",
+    content_subtype: str = "",
+    content_unit: Literal["", "qa", "turn"] = "",
     test_scenario: str = "",
     behavior_result: Literal["", "correct", "incorrect", "missing"] = "",
 ) -> dict[str, Any]:
@@ -165,6 +167,8 @@ def filters(
         "conversation_type": conversation_type,
         "anomaly": anomaly,
         "content_type": content_type,
+        "content_subtype": content_subtype,
+        "content_unit": content_unit,
         "test_scenario": test_scenario,
         "behavior_result": behavior_result,
     }
@@ -218,6 +222,8 @@ def cases(
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
     content_type: str = "",
+    content_subtype: str = "",
+    content_unit: Literal["", "qa", "turn"] = "",
     test_scenario: str = "",
     behavior_result: Literal["", "correct", "incorrect", "missing"] = "",
 ) -> dict[str, Any]:
@@ -239,6 +245,8 @@ def cases(
             conversation_type,
             anomaly,
             content_type,
+            content_subtype,
+            content_unit,
             test_scenario,
             behavior_result,
         ),
@@ -267,6 +275,8 @@ def export(
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
     content_type: str = "",
+    content_subtype: str = "",
+    content_unit: Literal["", "qa", "turn"] = "",
     test_scenario: str = "",
     behavior_result: Literal["", "correct", "incorrect", "missing"] = "",
 ) -> Response:
@@ -289,6 +299,8 @@ def export(
             conversation_type,
             anomaly,
             content_type,
+            content_subtype,
+            content_unit,
             test_scenario,
             behavior_result,
         ),

@@ -55,6 +55,7 @@ from photobench.application.run_execution.service import (
 from photobench.application.runs.index import RunIndex
 from photobench.config import default_import_timeout
 from photobench.domain.datasets.ports import AlbumSource
+from photobench.domain.datasets.qa_taxonomy import qa_fingerprint
 from photobench.domain.errors import InvalidRequestError
 from photobench.domain.http.ports import JsonHttpClient
 from photobench.domain.results.ports import RunResultWriter, RunStore
@@ -414,6 +415,28 @@ class RunSuites:
         except KeyError as exc:
             raise InvalidRequestError(f"manifest not found for album: {album_id}") from exc
 
+        snapshot = saved.get("qa_snapshot")
+        if not isinstance(snapshot, dict) or "rows" not in snapshot:
+            manifest = self._albums.manifest(album_id)
+            digest = (saved.get("input_integrity") or {}).get("qa_sha256")
+            current = self._albums.integrity(album_id, manifest, qa_set)
+            if (
+                not digest
+                or digest != current.get("qa_sha256")
+                or (saved.get("input_integrity") or {}).get("task_action_policy_sha256")
+                != current.get("task_action_policy_sha256")
+            ):
+                raise InvalidRequestError("原测评缺少QA快照，且无法确认题库版本一致，不能续跑")
+            rows = self._albums.qa_rows(album_id, qa_set)
+            snapshot = {
+                "album_id": album_id,
+                "qa_set": qa_set,
+                "rows": rows,
+                "definition_sha256": qa_fingerprint(rows),
+                "source": "verified_legacy_file",
+            }
+        if snapshot.get("definition_sha256") != qa_fingerprint(snapshot["rows"]):
+            raise InvalidRequestError("原测评QA快照校验失败，不能续跑")
         prior_items = tuple(
             item
             for item in (saved.get("items") or [])
@@ -439,6 +462,7 @@ class RunSuites:
             judge_url=str(saved.get("judge_url") or ""),
             judge_model=str(saved.get("judge_model") or ""),
             prior_items=prior_items,
+            frozen_qa_snapshot=snapshot,
         )
         prior_snapshot = saved.get("runtime_snapshot")
         if (
@@ -767,6 +791,22 @@ class RunSuites:
             targets = self._rejudge_targets(state.get("items") or [])
             if not targets:
                 raise InvalidRequestError("run has no completed agent answers to rejudge")
+            snapshot = state.get("qa_snapshot") or {}
+            definitions = {str(row["qa_id"]): row for row in snapshot.get("rows") or []}
+            if snapshot and snapshot.get("definition_sha256") != qa_fingerprint(snapshot.get("rows")):
+                raise InvalidRequestError("原测评QA快照校验失败，不能重评分")
+            for index, turn_index in targets:
+                item = state["items"][index]
+                if snapshot:
+                    definition = definitions.get(str(item.get("qa_id")))
+                    if definition is None or (
+                        turn_index is not None
+                        and turn_index >= (len(definition.get("conversation") or []) or 1)
+                    ):
+                        raise InvalidRequestError("原测评QA快照缺少对应题目或对话轮定义")
+                elif turn_index is not None and len(item["runtime_turns"]) > 1:
+                    if "reference_answer" not in item["runtime_turns"][turn_index]:
+                        raise InvalidRequestError("原测评未记录逐轮参考答案，不能重评分")
             rejudge_id = f"rejudge-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
             previous = state.get("rejudge")
             if previous:
@@ -819,12 +859,26 @@ class RunSuites:
         #: 「先读当前 state、改、再整份写回」保持同一个形状。
         runner: JudgeRunner
 
+        snapshot = state.get("qa_snapshot") or {}
+        definitions = {str(row["qa_id"]): row for row in snapshot.get("rows") or []}
+        gt_source = "frozen_qa_snapshot" if definitions else "saved_run_item"
+
         def _payload(index: int, turn_index: int | None) -> tuple[Any, ...]:
             item = (state.get("items") or [])[index]
             turns = item.get("runtime_turns") or []
             record = turns[turn_index] if turn_index is not None else item
-            expected = record.get("expected_action") or item.get("expected_action")
-            reference = str(record.get("reference_answer") or item.get("reference_answer") or "")
+            definition = definitions.get(str(item.get("qa_id")), item)
+            definition_turns = definition.get("conversation") or []
+            if turn_index is not None:
+                gt = definition_turns[turn_index] if definition_turns else definition if snapshot else record
+                if not snapshot and len(turns) == 1:
+                    gt = {**item, **record}
+            else:
+                gt = definition
+            expected = gt.get("expected_action")
+            reference = str(
+                gt.get("reference_answer") if "reference_answer" in gt else gt.get("answer") or ""
+            )
             if not reference and expected == "clarify":
                 reference = "应要求用户提供至少一个具体、可用于后续检索的锚点；询问形式不限。"
             return (
@@ -834,9 +888,9 @@ class RunSuites:
                 reference,
                 str(record.get("answer") or ""),
                 expected,
-                item.get("task_type"),
-                item.get("question_type"),
-                item.get("answerability"),
+                gt.get("task_type"),
+                gt.get("question_type"),
+                gt.get("answerability"),
                 turns[: turn_index + 1] if turn_index is not None else None,
                 record.get("agent_status") or item.get("agent_status"),
                 record.get("termination_reason") or item.get("termination_reason") or "",
@@ -956,14 +1010,16 @@ class RunSuites:
                         item = (current.get("items") or [])[index]
                         turns = item.get("runtime_turns") or []
                         record = turns[turn_index] if turn_index is not None else item
-                        judge_result["ground_truth_source"] = "current_qa_metadata"
+                        judge_result["ground_truth_source"] = gt_source
+                        judge_result["qa_definition_sha256"] = snapshot.get("definition_sha256")
                         judge_result["judged_at"] = now_iso()
                         judge_result["rejudge_id"] = rejudge_id
                         judge_result["status"] = (
                             "completed" if judge_result.get("score") in {0, 1, 2} else "failed"
                         )
                         record["judge"] = judge_result
-                        task_result["ground_truth_source"] = "current_qa_metadata"
+                        task_result["ground_truth_source"] = gt_source
+                        task_result["qa_definition_sha256"] = snapshot.get("definition_sha256")
                         record["task_judge"] = task_result
                         if turns:
                             item["judge"] = turns[-1].get("judge") or {}

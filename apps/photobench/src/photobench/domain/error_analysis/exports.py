@@ -9,6 +9,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from photobench.domain.datasets.qa_taxonomy import taxonomy_document
 from photobench.domain.error_analysis.taxonomy import QUALITY_DIMENSIONS
 
 DISPLAY_LABELS = {
@@ -48,6 +49,14 @@ DISPLAY_LABELS = {
     "clarify": "澄清",
     "none": "未作答",
 }
+_taxonomy = taxonomy_document()
+DISPLAY_LABELS.update({key: val["label"] for key, val in _taxonomy["tasks"].items()})
+DISPLAY_LABELS.update(
+    {key: val for task in _taxonomy["tasks"].values() for key, val in task["subtypes"].items()}
+)
+for _section in ("actions", "answerability", "difficulty", "special"):
+    DISPLAY_LABELS.update(_taxonomy[_section])
+DISPLAY_LABELS["content_subtype"] = "细分题型"
 SCORE_LABELS = {"2": "满分（2分）", "1": "部分完成（1分）", "0": "未完成（0分）", "None": "未评分"}
 
 
@@ -111,6 +120,7 @@ def export_report(
                     "question_type",
                     "task_type",
                     "content_type",
+                    "content_subtype",
                     "test_scenario",
                     "behavior_turns",
                     "angle",
@@ -129,6 +139,7 @@ def export_report(
                         c["dimensions"]["question_type"],
                         c["dimensions"].get("task_type", "unknown"),
                         c["dimensions"].get("content_type", "unknown"),
+                        c["dimensions"].get("content_subtype", "unknown"),
                         c["dimensions"].get("test_scenario", "unknown"),
                         json.dumps(c["turns"], ensure_ascii=False),
                         c["dimensions"].get("angle", "unknown"),
@@ -149,6 +160,7 @@ def export_report(
         "rule_version": report["rule_version"],
         "generated_at": report.get("generated_at"),
         "gt_fingerprint": report["gt_fingerprint"],
+        "annotation_fingerprint": report.get("annotation_fingerprint"),
         "result_fingerprint": report.get("result_fingerprint"),
         "stale": report.get("stale", False),
         "filters": dict(filters),
@@ -177,8 +189,10 @@ def export_report(
             f'value="{r["affected_items"]}"></meter> {r["affected_items"]}题 / {r["events"]}次；'
             f"最终执行失败 {r['final_failed_items']}题，已恢复 {r['recovered_items']}题</div>"
         )
+    unit = "轮" if filters.get("content_unit") == "turn" else "题"
+    groups = report.get("turn_groups", {}) if unit == "轮" else report["groups"]
     for dim in QUALITY_DIMENSIONS:
-        rows = report["groups"].get(dim, [])
+        rows = groups.get(dim, [])
         body += f"<h2>样本分布与表现：{_escape(DISPLAY_LABELS.get(dim, dim))}</h2>"
         for row in rows:
             label = _escape(
@@ -187,7 +201,7 @@ def export_report(
                 else DISPLAY_LABELS.get(row["value"], row["value"])
             )
             body += (
-                f"<p>{label} · 全部题目{row['total']} · 未评分{row.get('score_None', 0)}</p>"
+                f"<p>{label} · 共{row['total']}{unit} · 未评分{row.get('score_None', 0)}</p>"
                 '<div class="stack">'
             )
             for score in ["2", "1", "0", "None"]:
@@ -199,17 +213,21 @@ def export_report(
     if report["rule_version"] < 4:
         body += "<p>旧分类口径：请重新生成分析以查看内容题型与回答行为。</p>"
     body += "<h2>按得分看内容题型</h2>"
-    content = report["groups"].get("content_type", [])
+    content = groups.get("content_type", [])
     for score, label in SCORE_LABELS.items():
-        total = report["counts"].get("score_" + score, 0)
-        missing = sum(r.get("score_" + score, 0) for r in content if r["value"] == "unknown")
+        total = report["counts"].get(("turn_score_" if unit == "轮" else "score_") + score, 0)
+        missing = sum(
+            r.get("score_" + score, 0)
+            for r in content
+            if r["value"] in {"unknown", "not_applicable", "pending_review"}
+        )
         valid = total - missing
         body += (
-            f"<h3>{label}</h3><p>全部{total}题；已标注内容题型{valid}题；未标注{missing}题。"
-            "占比使用已标注题目。</p>"
+            f"<h3>{label}</h3><p>全部{total}{unit}；有效内容题型{valid}{unit}；不适用、待核或未记录{missing}{unit}。"
+            f"占比使用有效内容{unit}。</p>"
         )
         body += _table(
-            ["内容题型", "题数", "占已标注题目的比例"],
+            ["内容题型", f"{unit}数", f"占有效内容{unit}的比例"],
             [
                 [
                     DISPLAY_LABELS.get(r["value"], r["value"]),
@@ -217,7 +235,7 @@ def export_report(
                     f"{r.get('score_' + score, 0) / valid * 100:.1f}%" if valid else "未覆盖",
                 ]
                 for r in content
-                if r["value"] != "unknown"
+                if r["value"] not in {"unknown", "not_applicable", "pending_review"}
             ],
         )
     body += "<h2>内容题型 × 运行异常</h2>" + _table(

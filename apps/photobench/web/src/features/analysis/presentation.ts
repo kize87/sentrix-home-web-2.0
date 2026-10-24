@@ -1,6 +1,7 @@
+import { taxonomyLabels } from "../../lib/qaTaxonomy.ts";
 /** Display the dataset's saved labels; never infer a missing classification. */
 export const dimensions: Record<string, string> = {
-  content_type: "内容题型", angle: "考察角度",
+  content_type: "内容题型", content_subtype: "细分题型",
   difficulty: "难度", answerability: "可回答性", media_type: "媒体类型",
   conversation_type: "对话形式",
 };
@@ -20,6 +21,7 @@ const labels: Record<string, string> = {
   answerable: "可回答", unanswerable: "不可回答", partially_answerable: "部分可回答",
   answer: "直接回答", refuse: "拒答", clarify: "澄清", none: "未作答", unknown: "未标注／未知",
   improved: "改善", regressed: "退步", unchanged: "持平", paired: "定义一致", changed: "定义变化", unmatched: "未匹配",
+  annotations: "题目标签", qa_snapshot: "题库版本与定义",
   judge_config: "评分模型配置", judge_definition_fingerprints: "评分提示词", budgets: "执行预算", agent_limits: "Agent步数/工具上限", context_windows: "上下文窗口", model: "被测模型", device: "设备", build_revision: "代码版本",
   recovered: "已恢复", not_recovered: "未恢复", agent: "主模型", planner: "规划模型",
   judge: "评分模型", tool: "工具", tool_internal: "工具内部模型",
@@ -31,7 +33,7 @@ const labels: Record<string, string> = {
   completed: "已完成", completed_with_errors: "完成但有错误", interrupted: "已中断",
   normal: "正常结束", failed: "执行失败", cancelled: "已取消",
 };
-export const displayLabel = (value: string) => value.split(" / ").map(part => labels[part] || part).join("、");
+export const displayLabel = (value: string) => value.split(" / ").map(part => taxonomyLabels[part] || labels[part] || part).join("、");
 export const scores = [
   { value: "2", label: "满分（2分）", short: "满分", color: "#287c65" },
   { value: "1", label: "部分完成（1分）", short: "部分完成", color: "#ba8527" },

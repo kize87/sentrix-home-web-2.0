@@ -1123,7 +1123,8 @@ def capability_summary(
         judge
         for item in items
         for judge in (item.get("task_judges") or [item.get("task_judge") or {}])
-        if judge.get("expected_action") in {"answer", "refuse", "clarify"}
+        if judge.get("expected_action") in {"answer", "refuse", "clarify", "answer_and_refuse"}
+        and (judge.get("expected_action") != "answer_and_refuse" or judge.get("behavior_rule_version") == 2)
     ]
     action_valid = [value for value in action_judges if value.get("correct") in {True, False}]
     parse_totals = [item.get("agent_stability", {}).get("json_parse_total") for item in items]

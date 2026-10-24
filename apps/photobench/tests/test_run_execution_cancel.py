@@ -327,7 +327,12 @@ def test_cancelled_phase_submits_only_the_active_window_and_keeps_qa_ids():
     execution, _ = _execution()
     rows = [{"qa_id": f"q{i}", "question": "hello"} for i in range(40)]
     execution.albums = FakeAlbums(manifest={"album_id": ALBUM}, qa_rows=rows)
-    state = RunState({"status": "running", "scope_id": "s", "album_id": ALBUM, "phases": {}})
+    state = RunState(
+        {
+            **{"status": "running", "scope_id": "s", "album_id": ALBUM, "phases": {}},
+            "qa_snapshot": {"rows": execution.albums.qa_rows(ALBUM, "qa-1")},
+        }
+    )
     execution._state = state
     started = []
 
@@ -381,7 +386,12 @@ def test_slow_judge_backpressure_bounds_queued_work_and_still_finishes_all_rows(
     execution.albums = FakeAlbums(
         manifest={"album_id": ALBUM}, qa_rows=[{"qa_id": f"q{i}", "question": "test"} for i in range(20)]
     )
-    state = RunState({"status": "running", "scope_id": "s", "album_id": ALBUM, "phases": {}})
+    state = RunState(
+        {
+            **{"status": "running", "scope_id": "s", "album_id": ALBUM, "phases": {}},
+            "qa_snapshot": {"rows": execution.albums.qa_rows(ALBUM, "qa-1")},
+        }
+    )
     execution._state = state
     entered, release = threading.Event(), threading.Event()
     started, errors = [], []

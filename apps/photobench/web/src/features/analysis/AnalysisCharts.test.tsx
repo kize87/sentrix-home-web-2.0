@@ -73,21 +73,21 @@ it("默认任务类型展示正确/部分/错误/未评分，点击类别与分�
     source: {}, result_fingerprint: "r", gt_fingerprint: "g", counts: {score_2: 1, score_1: 1, score_0: 1, score_None: 1},
     denominators: {quality_valid: 3, quality_missing: 1}, errors: [], heatmap: [], behavior_matrix: [], definitions: [],
     groups: {content_type: [{value: "T5_event_summary", total: 2, score_2: 1, score_1: 1}, {value: "T3_enumeration", total: 1, score_0: 1}, {value: "unknown", total: 1, score_None: 1}],
-      angle: [{value: "time", total: 4, score_2: 1, score_1: 1, score_0: 1, score_None: 1}]},
+      content_subtype: [{value: "fact_time", total: 4, score_2: 1, score_1: 1, score_0: 1, score_None: 1}]},
   } as AnalysisReport;
   const filter = vi.fn();
   render(<AnalysisCharts report={report} filter={filter} />);
-  expect(screen.getByText("事件总结")).toBeTruthy();
-  expect(screen.getByText("统计枚举")).toBeTruthy();
+  expect(screen.getByText("内容概述 ›")).toBeTruthy();
+  expect(screen.getByText("统计整理 ›")).toBeTruthy();
   expect(screen.getByText("未覆盖 / 0题")).toBeTruthy();
   const distribution = chart.setOption.mock.calls.find(([option]) => option.series?.[0]?.stack === "scores")?.[0];
   expect(distribution.series[0].data[0].label.show).toBe(true);
   expect(distribution.series[0].data[1].label.show).toBe(false);
-  fireEvent.click(screen.getByLabelText("事件总结 满分（2分）"));
+  fireEvent.click(screen.getByLabelText("内容概述 满分（2分）"));
   expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({content_type: "T5_event_summary", score: "2", code: ""}));
-  fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "angle"}});
+  fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "content_subtype"}});
   fireEvent.click(screen.getByLabelText("时间 部分完成（1分）"));
-  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({angle: "time", score: "1", content_type: ""}));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({content_subtype: "fact_time", score: "1", content_type: ""}));
 });
 
 it("合并后的媒体检索与行为分类显示中文，窄柱段数字保留在表格", () => {
@@ -101,7 +101,7 @@ it("合并后的媒体检索与行为分类显示中文，窄柱段数字保留�
   } as unknown as AnalysisReport;
   const filter = vi.fn();
   render(<AnalysisCharts report={report} filter={filter} />);
-  expect(screen.getAllByText("媒体检索")).toHaveLength(1);
+  expect(screen.getAllByText("媒体检索 ›")).toHaveLength(1);
   expect(screen.getByText("未标注内容题型")).toBeTruthy();
   expect(screen.queryByText("behavior")).toBeNull();
   expect(screen.queryByText("怎么读这份报告")).toBeNull();
@@ -129,7 +129,7 @@ it("按得分看题型按题数排序，占比以该得分全部题为分母，�
   expect(screen.getByText(/满分（2分） · 共5题/)).toBeTruthy();
   expect(screen.getAllByText("50.0%")).toHaveLength(2);
   const scoreOption = () => chart.setOption.mock.calls.filter(([option]) => option.legend?.show === false).at(-1)![0];
-  expect(scoreOption().yAxis.data).toEqual(["媒体检索", "事件总结"]);
+  expect(scoreOption().yAxis.data).toEqual(["媒体检索", "内容概述"]);
   expect(scoreOption().series[0].data.map((x: {value: number}) => x.value)).toEqual([1, 1]);
   fireEvent.click(screen.getByRole("button", {name: "媒体检索 满分（2分）案例"}));
   expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({content_type: "T1_retrieve_media", score: "2"}));
@@ -162,8 +162,8 @@ it("所选得分无题、分类缺失及多标签重叠如实展示，不用全�
   expect(screen.getByText("本轮没有未评分的题目。")).toBeTruthy();
   fireEvent.change(screen.getByLabelText("分布得分"), {target: {value: "1"}});
   expect(screen.getByText("这些题未标注内容题型。")).toBeTruthy();
-  fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "angle"}});
-  expect(screen.getByText("这些题未标注考察角度。")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "content_subtype"}});
+  expect(screen.getByText("这些题未标注细分题型。")).toBeTruthy();
 });
 
 
@@ -187,7 +187,7 @@ it("行为分布按轮单独组成100%，行为符合与质量分分别筛选", 
   fireEvent.click(screen.getByRole("button", {name: "按得分看题型"}));
   fireEvent.change(screen.getByLabelText("分布得分"), {target: {value: "0"}});
   expect(screen.getAllByText("100.0%").length).toBeGreaterThan(0);
-  expect(screen.getByText("未标注 1题")).toBeTruthy();
+  expect(screen.getByText("未标注内容题型 1题")).toBeTruthy();
   expect(screen.queryByRole("button", {name: "未标注内容题型 未完成（0分）案例"})).toBeNull();
 });
 
@@ -195,4 +195,30 @@ it("旧报告要求重生成，不再使用混合的任务标签绘图", () => {
   render(<AnalysisCharts report={{rule_version: 3} as AnalysisReport} filter={vi.fn()} />);
   expect(screen.getByText(/此报告使用旧分类口径/)).toBeTruthy();
   expect(init).not.toHaveBeenCalled();
+});
+
+it("两级题型下钻保留得分筛选，纯安全和待核排除占比，轮级筛选使用同一轮", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const report = {rule_version: 5, item_count: 4, counts: {score_2: 4, turn_score_2: 5},
+    groups: {content_type: [
+      {value: "T2_fact_qa", total: 2, score_2: 2}, {value: "not_applicable", total: 1, score_2: 1},
+      {value: "pending_review", total: 1, score_2: 1}],
+      content_subtype: [{value: "fact_place", total: 1, score_2: 1}, {value: "fact_time", total: 1, score_2: 1}]},
+    turn_groups: {content_type: [{value: "T2_fact_qa", total: 5, score_2: 5}],
+      content_subtype: [{value: "fact_place", total: 2, score_2: 2}, {value: "fact_time", total: 3, score_2: 3}]},
+    denominators: {turns: 5, turn_quality_valid: 5}, errors: [], heatmap: [], behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  const filter = vi.fn();
+  render(<AnalysisCharts report={report} filter={filter} />);
+  fireEvent.click(screen.getByRole("button", {name: "按得分看题型"}));
+  expect(screen.getByText("100.0%")).toBeTruthy();
+  expect(screen.getByRole("button", {name: "不适用 1题"})).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", {name: "事实查询 ›"}));
+  expect(screen.getByLabelText("分析内容大类")).toHaveProperty("value", "T2_fact_qa");
+  fireEvent.click(screen.getByRole("button", {name: "地点 满分（2分）案例"}));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({content_subtype: "fact_place", score: "2", content_unit: "qa"}));
+  fireEvent.change(screen.getByLabelText("内容统计单位"), {target: {value: "turn"}});
+  fireEvent.click(screen.getByRole("button", {name: "展开细分题型"}));
+  fireEvent.click(screen.getByRole("button", {name: "时间 满分（2分）案例"}));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({content_subtype: "fact_time", score: "2", content_unit: "turn"}));
 });

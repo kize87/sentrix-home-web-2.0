@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from photobench.domain.datasets.qa_taxonomy import snapshot_metadata
 from photobench.domain.error_analysis.rules import Aggregator, case_from_item, compare_reports, fingerprint
 from photobench.domain.runs.judge import judge_chat_url
 from photobench.infrastructure.results.store import committed_path, run_lock
@@ -37,6 +38,7 @@ def source(root: Path, run_id: str) -> dict[str, Any]:
         runtime = state.get("runtime_snapshot") or {}
         return {
             "run_id": run_id,
+            "qa_snapshot": snapshot_metadata(state.get("qa_snapshot") or {}),
             "path": str(rows if rows.is_file() else selected / "run.json"),
             "format": "jsonl" if rows.is_file() else "legacy_run_json",
             "revision": fingerprint(identity),

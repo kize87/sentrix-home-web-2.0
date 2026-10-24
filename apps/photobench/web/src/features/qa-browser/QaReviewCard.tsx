@@ -1,3 +1,4 @@
+import { taxonomyLabel } from "../../lib/qaTaxonomy.ts";
 /**
  * 单条 QA 的审阅卡。逐行移植 1.0 `App.vue:3703-3761`：
  *
@@ -91,9 +92,9 @@ export function QaReviewCard({ item, index, onOpenMedia }: QaReviewCardProps) {
             <span className={`qa-badge badge-${item.expected_action || "answer"}`}>
               {qaActionBadge(item.expected_action)}
             </span>
-            <span className="qa-type-tag">{qaTypeLabel(item.question_type)}</span>
+            <span className="qa-type-tag">{item.task_type ? `${taxonomyLabel(item.task_type)} · ` : ""}{qaTypeLabel(item.question_type)}</span>
             <span className="qa-answerability-tag">{qaAnswerabilityLabel(item.answerability)}</span>
-            {item.difficulty ? <span className="qa-difficulty-tag">{item.difficulty}</span> : null}
+            {item.difficulty ? <span className="qa-difficulty-tag">{taxonomyLabel(item.difficulty)}</span> : null}
             {(item.tags || []).map((tag) => (
               <span key={tag} className="qa-data-tag">
                 {tag}
@@ -117,6 +118,7 @@ export function QaReviewCard({ item, index, onOpenMedia }: QaReviewCardProps) {
                 </div>
                 <div className="qa-bubble user-bubble">
                   <p>{turn.message}</p>
+                  {turn.task_type ? <span>{taxonomyLabel(turn.task_type)} · {taxonomyLabel(turn.question_type)}</span> : null}
                   {turn.expected_action ? (
                     <span className={`bubble-action-hint hint-${turn.expected_action}`}>
                       期望行为 · {qaActionBadge(turn.expected_action)}

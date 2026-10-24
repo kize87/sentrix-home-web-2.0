@@ -1,3 +1,4 @@
+import { taxonomyLabel } from "../../lib/qaTaxonomy.ts";
 /**
  * 「QA 逐题结果」入口。移植 1.0 `App.vue:3432-3670` 的
  * `<section id="qa-results" class="qa-results-section">`：
@@ -171,15 +172,19 @@ export function QaResults({
             <option value="">全部任务类型</option>
             {(facets.task_types ?? []).map((value) => (
               <option key={value} value={value}>
-                {value}
+                {taxonomyLabel(value)}
               </option>
             ))}
+          </select>
+          <select aria-label="运行细分题型" value={qaFilters.question_type || ""} onChange={event => setQaFilter("question_type", event.target.value)}>
+            <option value="">全部细分题型</option>
+            {(facets.question_types ?? []).map(value => <option key={value} value={value}>{taxonomyLabel(value)}</option>)}
           </select>
           <select value={qaFilters.tag} onChange={(event) => setQaFilter("tag", event.target.value)}>
             <option value="">全部标签</option>
             {(facets.tags ?? []).map((value) => (
               <option key={value} value={value}>
-                {value}
+                {taxonomyLabel(value)}
               </option>
             ))}
           </select>
@@ -187,7 +192,7 @@ export function QaResults({
             <option value="">全部问题角度</option>
             {(facets.angles ?? []).map((value) => (
               <option key={value} value={value}>
-                {value}
+                {taxonomyLabel(value)}
               </option>
             ))}
           </select>
@@ -195,7 +200,7 @@ export function QaResults({
             <option value="">全部难度</option>
             {(facets.difficulties ?? []).map((value) => (
               <option key={value} value={value}>
-                {value}
+                {taxonomyLabel(value)}
               </option>
             ))}
           </select>
@@ -206,7 +211,7 @@ export function QaResults({
             <option value="">全部可回答性</option>
             {(facets.answerabilities ?? []).map((value) => (
               <option key={value} value={value}>
-                {value}
+                {taxonomyLabel(value)}
               </option>
             ))}
           </select>
@@ -217,7 +222,7 @@ export function QaResults({
             <option value="">全部 Agent 状态</option>
             {(facets.agent_statuses ?? []).map((value) => (
               <option key={value} value={value}>
-                {value}
+                {taxonomyLabel(value)}
               </option>
             ))}
           </select>

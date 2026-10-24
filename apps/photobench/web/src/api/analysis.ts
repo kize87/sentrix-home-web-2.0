@@ -64,6 +64,7 @@ export interface AnalysisReport {
     string,
     ({ value: string; total: number } & Record<string, string | number>)[]
   >;
+  turn_groups?: AnalysisReport["groups"];
   behavior_groups?: BehaviorGroup[];
   behavior_scenarios?: BehaviorGroup[];
   heatmap: { content_type: string; code: string; count: number }[];

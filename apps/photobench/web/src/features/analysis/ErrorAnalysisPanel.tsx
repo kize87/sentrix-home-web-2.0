@@ -115,7 +115,7 @@ function CaseCard({
         />{" "}
         <span className={`analysis-outcome outcome-${c.score ?? "None"}`}>{scoreLabel(c.score)}</span>{" "}
         {c.question || c.qa_id || c.index}
-        <small>{c.qa_id} · {(c.dimensions.content_type === "unknown" ? "未标注内容题型" : displayLabel(c.dimensions.content_type || "unknown"))} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
+        <small>{c.qa_id} · {displayLabel(c.dimensions.content_subtype || "unknown")} · {(c.dimensions.content_type === "unknown" ? "未标注内容题型" : displayLabel(c.dimensions.content_type || "unknown"))} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
       </summary>
       <h5>问题</h5>
       <p>{c.question}</p>
@@ -411,7 +411,8 @@ export function ErrorAnalysisPanel({
     });
   const filterOptions: Record<string, [string, string[][]]> = r ? {
                   code: ["运行异常类别", r.errors.map((x) => [x.code, x.label])],
-                  ...Object.fromEntries(Object.entries(dimensions).map(([key, label]) => [key, [label, (r.groups[key] || []).map(x => [x.value, key === "content_type" && x.value === "unknown" ? "未标注内容题型" : displayLabel(x.value)])]])),
+                  content_unit: ["内容统计单位", [["qa", "题（最终任务）"], ["turn", "对话轮"]]],
+                  ...Object.fromEntries(Object.entries(dimensions).map(([key, label]) => [key, [label, ((filters.content_unit === "turn" ? r.turn_groups : r.groups)?.[key] || []).map(x => [x.value, key === "content_type" && x.value === "unknown" ? "未标注内容题型" : displayLabel(x.value)])]])),
                   test_scenario: ["测试场景", (r.behavior_scenarios || []).map(x => [x.value, x.value === "unknown" ? "未标注专项场景" : displayLabel(x.value)])],
                   behavior_result: ["行为判定", [["correct", "符合预期"], ["incorrect", "不符合预期"], ["missing", "未判定"]]],
                   score: ["任务完成质量", [...scores.map(x => [x.value, x.label]), ["low", "未得满分（0/1分）"]]],
@@ -426,14 +427,14 @@ export function ErrorAnalysisPanel({
                   ],
                   expected_action: [
                     "预期行为",
-                    ["answer", "refuse", "clarify", "unknown"].map((x) => [
+                    ["answer", "refuse", "clarify", "answer_and_refuse", "unknown"].map((x) => [
                       x,
                       displayLabel(x),
                     ]),
                   ],
                   actual_action: [
                     "实际行为",
-                    ["answer", "refuse", "clarify", "none", "unknown"].map(
+                    ["answer", "refuse", "clarify", "answer_and_refuse", "none", "unknown"].map(
                       (x) => [x, displayLabel(x)],
                     ),
                   ],
@@ -559,6 +560,7 @@ export function ErrorAnalysisPanel({
                   ? "仅导入与处理阶段"
                   : `${r.item_count}题`}{" "}
                 · {new Date(r.generated_at * 1000).toLocaleString()}
+                {!!r.source.qa_snapshot && <span> · 数据版本 {String((r.source.qa_snapshot as Record<string, unknown>).dataset_version || "未记录")} · 分类版本 {String((r.source.qa_snapshot as Record<string, unknown>).taxonomy_version || "未记录")}</span>}
               </p>
               <details>
                 <summary>统计口径、来源与数据完整性</summary>

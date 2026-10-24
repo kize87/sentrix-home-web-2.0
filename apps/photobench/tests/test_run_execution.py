@@ -226,7 +226,12 @@ def test_judge_results_and_progress_are_published_while_an_agent_is_still_runnin
     execution, _, _, _, _ = _execution(albums=FakeAlbums(manifest=_manifest(), qa_rows=rows))
     release = threading.Event()
     published = threading.Event()
-    state = RunState({"scope_id": "s", "album_id": ALBUM})
+    state = RunState(
+        {
+            **{"scope_id": "s", "album_id": ALBUM},
+            "qa_snapshot": {"rows": execution.albums.qa_rows(ALBUM, "qa-1")},
+        }
+    )
 
     def evaluate(row, *_):
         if row["qa_id"] == "slow":
@@ -301,7 +306,12 @@ def test_resume_judge_progress_counts_prior_terminal_results_and_new_skips(monke
             "judge": {"score": None},
         },
     ]
-    state = RunState({"scope_id": "s", "album_id": ALBUM})
+    state = RunState(
+        {
+            **{"scope_id": "s", "album_id": ALBUM},
+            "qa_snapshot": {"rows": execution.albums.qa_rows(ALBUM, "qa-1")},
+        }
+    )
     execution._phase_qa_eval(state, _request(prior_items=prior))
     phase = state.data["phases"]["qa_eval"]
     assert phase["judge_completed"] == phase["progress"]["judge_completed"] == 2
@@ -321,7 +331,12 @@ def test_cancelled_unscheduled_qa_is_not_reported_as_a_completed_agent_or_judge(
     monkeypatch.setattr(
         execution, "_judge", SimpleNamespace(judge_item=lambda *_: pytest.fail("cancelled QA judged"))
     )
-    state = RunState({"scope_id": "s", "album_id": ALBUM})
+    state = RunState(
+        {
+            **{"scope_id": "s", "album_id": ALBUM},
+            "qa_snapshot": {"rows": execution.albums.qa_rows(ALBUM, "qa-1")},
+        }
+    )
     with pytest.raises(RunCancelledError):
         execution._phase_qa_eval(state, _request())
     progress = state.data["phases"]["qa_eval"]["progress"]

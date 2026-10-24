@@ -11,12 +11,13 @@ from typing import Any
 from photobench.domain.error_analysis.taxonomy import (
     QUALITY_DIMENSIONS,
     category_value,
+    content_subtypes,
     content_types,
-    test_scenarios,
+    scenarios,
 )
 from photobench.domain.runs.analysis import judge_score_for_summary
 
-RULE_VERSION = 4
+RULE_VERSION = 5
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -47,6 +48,7 @@ DIMENSIONS = (
     "question_type",
     "task_type",
     "content_type",
+    "content_subtype",
     "test_scenario",
     "difficulty",
     "angle",
@@ -277,27 +279,40 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         expected = turn_record.get("expected_action") or (
             item.get("expected_action") if len(turns) == 1 else None
         )
+        mixed_valid = expected != "answer_and_refuse" or task.get("behavior_rule_version") == 2
+        turn_content = content_types(saved_labels(turn_record.get("task_type")))
+        turn_subtype = content_subtypes(
+            str(turn_record.get("task_type")), str(turn_record.get("question_type"))
+        )
         turn_rows.append(
             {
+                "content_type": turn_content,
+                "content_subtype": turn_subtype,
+                "difficulty": saved_labels(turn_record.get("difficulty")),
+                "answerability": saved_labels(turn_record.get("answerability")),
                 "turn": ti,
                 "turn_id": turn_record.get("turn_id"),
                 "termination_reason": reason,
                 "recorded_expected": expected,
                 "recorded_actual": task.get("actual_action"),
-                "expected": expected if expected in {"answer", "refuse", "clarify"} else None,
+                "expected": expected
+                if expected in {"answer", "refuse", "clarify", "answer_and_refuse"}
+                else None,
                 "actual": task.get("actual_action")
-                if task.get("judge_status") != "failed"
-                and task.get("actual_action") in {"answer", "refuse", "clarify", "none"}
+                if mixed_valid
+                and task.get("judge_status") != "failed"
+                and task.get("actual_action") in {"answer", "refuse", "clarify", "answer_and_refuse", "none"}
                 else None,
                 "behavior_correct": task.get("correct")
-                if isinstance(task.get("correct"), bool)
+                if mixed_valid
+                and isinstance(task.get("correct"), bool)
                 and task.get("judge_status") != "failed"
-                and expected in {"answer", "refuse", "clarify"}
-                and task.get("actual_action") in {"answer", "refuse", "clarify", "none"}
+                and expected in {"answer", "refuse", "clarify", "answer_and_refuse"}
+                and task.get("actual_action") in {"answer", "refuse", "clarify", "answer_and_refuse", "none"}
                 else None,
                 "judge_reason": str(task.get("reason") or "")[:2000],
-                "test_scenarios": test_scenarios(
-                    saved_labels(turn_record.get("question_type") or item.get("question_type"))
+                "test_scenarios": scenarios(
+                    {"question_type": item.get("question_type"), **dict(turn_record)}
                 ),
                 "score": judge_score_for_summary(turn_record.get("judge")),
             }
@@ -366,16 +381,27 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         "retrieval_video_ids",
         "answer_evidence_media_refs",
         "reference_answer",
-        "expected_action",
         "answer_claims",
         "answer_evidence_image_ids",
         "answer_evidence_video_ids",
-        "answerability",
-        "task_type",
         "required_evidence_sources",
     )
-    gt = {k: item[k] for k in gt_fields if k in item}
-    turn_gt = [{k: t[k] for k in gt_fields if t.get(k)} for t in turns]
+
+    def canonical_gt(record: Mapping[str, Any]) -> dict[str, Any]:
+        value = {k: record[k] for k in gt_fields if k in record}
+        for prefix in ("retrieval", "answer_evidence"):
+            if prefix + "_media_refs" in value:
+                value.pop(prefix + "_image_ids", None)
+                value.pop(prefix + "_video_ids", None)
+        if value.get("answer_claims"):
+            value["answer_claims"] = [
+                {k: v for k, v in claim.items() if k not in {"evidence_image_ids", "evidence_video_ids"}}
+                for claim in value["answer_claims"]
+            ]
+        return value
+
+    gt = canonical_gt(item)
+    turn_gt = [canonical_gt(t) for t in turns]
     if any(turn_gt):
         gt["turns"] = turn_gt
     media = {str(x.get("media_type")) for x in item.get("retrieval_media_refs") or [] if isinstance(x, dict)}
@@ -384,7 +410,9 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
     if item.get("retrieval_video_ids"):
         media.add("video")
     source_labels = {
-        k: saved_labels(item.get(k)) for k in DIMENSIONS if k not in {"content_type", "test_scenario"}
+        k: saved_labels(item.get(k))
+        for k in DIMENSIONS
+        if k not in {"content_type", "content_subtype", "test_scenario"}
     }
     dimension_labels = {k: list(v) for k, v in source_labels.items()}
     dimension_labels = {
@@ -398,6 +426,9 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         )
     )
     dimension_labels["content_type"] = content_types(dimension_labels["task_type"])
+    dimension_labels["content_subtype"] = content_subtypes(
+        str(item.get("task_type")), str(item.get("question_type"))
+    )
     dimension_labels["test_scenario"] = sorted({v for t in turn_rows for v in t["test_scenarios"]})
     dimensions = {k: " / ".join(values) for k, values in dimension_labels.items()}
     dimensions.update(
@@ -408,6 +439,9 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
     retrieval = item.get("candidate_retrieval_counts") or {}
     delivery = item.get("media_retrieval_counts") or {}
     signals = []
+    content_applicable = dimension_labels["content_type"] != ["not_applicable"]
+    if not content_applicable:
+        retrieval, delivery = {}, {}
     if retrieval.get("gt", 0) > 0:
         if retrieval.get("matched") == 0:
             signals.append("candidate_miss")
@@ -422,7 +456,9 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         missing.append("trace")
     if not any(gt.get(k) for k in gt):
         missing.append("gt")
-    if not any(item.get(k) for k in ("retrieval_media_refs", "retrieval_image_ids", "retrieval_video_ids")):
+    if content_applicable and not any(
+        item.get(k) for k in ("retrieval_media_refs", "retrieval_image_ids", "retrieval_video_ids")
+    ):
         missing.append("retrieval_gt")
     if not item.get("question_type"):
         missing.append("question_type")
@@ -490,13 +526,40 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
             {
                 "question": item.get("question"),
                 "gt": gt,
-                "conversation": [
-                    {k: t.get(k) for k in ("message", "reference_answer", "expected_action")} for t in turns
-                ],
+                "conversation": [{k: t.get(k) for k in ("message", "reference_answer")} for t in turns],
                 "context_mode": item.get("conversation_context_mode"),
             }
         ),
         "gt_fingerprint": fingerprint(gt),
+        "annotation_fingerprint": fingerprint(
+            {
+                "item": {
+                    k: item.get(k)
+                    for k in (
+                        "task_type",
+                        "question_type",
+                        "expected_action",
+                        "answerability",
+                        "difficulty",
+                        "injection",
+                    )
+                },
+                "turns": [
+                    {
+                        k: t.get(k)
+                        for k in (
+                            "task_type",
+                            "question_type",
+                            "expected_action",
+                            "answerability",
+                            "difficulty",
+                            "injection",
+                        )
+                    }
+                    for t in turns
+                ],
+            }
+        ),
         "score": score,
         "execution": status,
         "dimensions": dimensions,
@@ -529,6 +592,10 @@ class Aggregator:
         self.total = 0
         self.counts: Counter[str] = Counter()
         self.groups: dict[str, dict[str, Counter[str]]] = {k: {} for k in QUALITY_DIMENSIONS}
+        self.turn_groups: dict[str, dict[str, Counter[str]]] = {
+            k: {} for k in ("content_type", "content_subtype", "difficulty", "answerability")
+        }
+        self.annotation_hash = hashlib.sha256()
         self.behavior_groups: dict[str, Counter[str]] = {}
         self.behavior_scenarios: dict[str, Counter[str]] = {}
         self.errors: dict[str, Counter[str]] = {}
@@ -545,6 +612,7 @@ class Aggregator:
         self.agent_limits.update({fingerprint(v): v for v in case["agent_limits"]})
         self.context_windows.update(case["context_windows"])
         self.gt_hash.update((case["qa_id"] + case["gt_fingerprint"]).encode())
+        self.annotation_hash.update((case["qa_id"] + case["annotation_fingerprint"]).encode())
         self.counts["score_" + str(case["score"])] += 1
         self.counts["execution_" + case["execution"]] += 1
         for key in (
@@ -587,6 +655,11 @@ class Aggregator:
                 for name in ("gt", "matched", "predicted"):
                     self.counts[channel + "_" + name] += counts.get(name, 0)
         for turn in case["turns"]:
+            for dim, groups in self.turn_groups.items():
+                for value in set(turn[dim]):
+                    row = groups.setdefault(value, Counter())
+                    row["total"] += 1
+                    row["score_" + str(turn["score"])] += 1
             self.counts["turns"] += 1
             self.counts["turn_score_" + str(turn["score"])] += 1
             expected, actual = turn["expected"], turn["actual"]
@@ -618,10 +691,24 @@ class Aggregator:
                 "context_windows": sorted(self.context_windows),
             },
             "gt_fingerprint": self.gt_hash.hexdigest(),
+            "annotation_fingerprint": self.annotation_hash.hexdigest(),
+            "turn_groups": {
+                k: [{"value": v, **dict(c)} for v, c in rows.items()] for k, rows in self.turn_groups.items()
+            },
             "item_count": self.total,
             "counts": dict(self.counts),
             "denominators": {
                 "qa": self.total,
+                "content_valid": sum(
+                    c["total"]
+                    for v, c in self.groups["content_type"].items()
+                    if v not in {"unknown", "not_applicable", "pending_review"}
+                ),
+                "content_not_applicable": self.groups["content_type"].get("not_applicable", Counter())[
+                    "total"
+                ],
+                "content_pending": self.groups["content_type"].get("pending_review", Counter())["total"],
+                "content_missing": self.groups["content_type"].get("unknown", Counter())["total"],
                 "quality_valid": self.total - self.counts["score_None"],
                 "quality_missing": self.counts["score_None"],
                 "turns": self.counts["turns"],
@@ -648,7 +735,9 @@ class Aggregator:
             ],
             "heatmap": [{"content_type": q, "code": c, "count": n} for (q, c), n in self.heatmap.items()],
             "definitions": [
-                "原始标签保留在source_labels；内容任务标签出现在考察角度时标为未标注角度，不作同维度比较。",
+                "题级内容统计采用最终实质任务与最终得分；轮级内容使用该轮标签与得分，不从最终轮补标签。",
+                "不适用、待核定、未记录题型单列，不进入有效内容题型的占比分母。",
+                "证据指纹与标签指纹分开保存；标签变化不会标成GT变化，标签不同不提供改善汇总。",
                 "内容类型仅取明确的内容任务标签；行为测试、预期动作、测试场景不作为内容类型。未标注内容类型不推断。",
                 "0/1/2分表示任务完成质量（含回答、拒答与澄清）；行为符合率独立使用逐轮行为判定，不从质量分推算。",
                 "行为覆盖以全部对话轮为分母（含预期未知）；行为符合率以有效行为判定轮数为分母。案例列表按题去重。",
@@ -662,6 +751,63 @@ class Aggregator:
 
 
 def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
+    if filters.get("content_unit") == "turn":
+        turn_filters = {
+            k: v
+            for k, v in filters.items()
+            if k
+            in {
+                "content_type",
+                "content_subtype",
+                "difficulty",
+                "answerability",
+                "score",
+                "expected_action",
+                "actual_action",
+                "behavior_result",
+                "test_scenario",
+            }
+            and v
+        }
+
+        def turn_matches(turn: Mapping[str, Any]) -> bool:
+            for key, value in turn_filters.items():
+                if key in {
+                    "content_type",
+                    "content_subtype",
+                    "difficulty",
+                    "answerability",
+                } and value not in turn.get(key, []):
+                    return False
+                if key == "score" and (
+                    turn.get("score") not in (0, 1) if value == "low" else str(turn.get("score")) != value
+                ):
+                    return False
+                if (
+                    key in {"expected_action", "actual_action"}
+                    and str(turn.get("expected" if key == "expected_action" else "actual") or "unknown")
+                    != value
+                ):
+                    return False
+                if (
+                    key == "behavior_result"
+                    and (
+                        "correct"
+                        if turn["behavior_correct"] is True
+                        else "incorrect"
+                        if turn["behavior_correct"] is False
+                        else "missing"
+                    )
+                    != value
+                ):
+                    return False
+                if key == "test_scenario" and value not in turn.get("test_scenarios", []):
+                    return False
+            return True
+
+        if not any(turn_matches(t) for t in case["turns"]):
+            return False
+        filters = {k: v for k, v in filters.items() if k not in turn_filters}
     behavioral = {
         k: v
         for k, v in filters.items()
@@ -732,6 +878,7 @@ def compare_reports(
         "model",
         "device",
         "build_revision",
+        "qa_snapshot",
     ):
         if left["source"].get(k) != right["source"].get(k):
             differences.append(k)
@@ -787,6 +934,9 @@ def compare_reports(
                     - {e["code"] for e in (y or {}).get("events", [])}
                 ),
                 "gt_changed": bool(x and y and x["gt_fingerprint"] != y["gt_fingerprint"]),
+                "annotations_changed": bool(
+                    x and y and x.get("annotation_fingerprint") != y.get("annotation_fingerprint")
+                ),
                 "quality_change": ("improved" if delta > 0 else "regressed" if delta < 0 else "unchanged")
                 if delta is not None
                 else "unknown",
@@ -797,6 +947,9 @@ def compare_reports(
     duplicates = sorted(
         k for k in counts_a.keys() | counts_b.keys() if not k or counts_a[k] > 1 or counts_b[k] > 1
     )
+    if any(row["annotations_changed"] for row in rows if row["pairing"] == "paired"):
+        differences.append("annotations")
+        comparable = False
     return {
         "sources": {"left": left["source"], "right": right["source"]},
         "differences": differences,

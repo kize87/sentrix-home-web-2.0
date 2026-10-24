@@ -62,6 +62,7 @@ from photobench.application.run_execution.judge import InlineImages, JudgeRunner
 from photobench.application.run_execution.state import RunState
 from photobench.config import default_qa_concurrency
 from photobench.domain.datasets.ports import AlbumSource
+from photobench.domain.datasets.qa_taxonomy import qa_fingerprint
 from photobench.domain.errors import RequestOutcomeUnknownError
 from photobench.domain.http.ports import JsonHttpClient
 from photobench.domain.results.ports import RunResultWriter
@@ -138,6 +139,10 @@ _DEFAULT_SLEEP = time.sleep
 
 #: 顺带搬过来的 item 字段（1.0 ``:3379``）。这些是题库侧的标签，主链只负责带过去。
 PASSTHROUGH_FIELDS = (
+    "injection",
+    "taxonomy_version",
+    "dataset_version",
+    "qa_schema_version",
     "task_type",
     "question_type",
     "tags",
@@ -193,6 +198,7 @@ class RunRequest:
     #: 1.0 的 ``resume_state``（``:7560-7564`` 把整份旧 state 塞进新 run），
     #: 2.0 只带 items 那一格——其余字段（相位、硬件快照）属于那一次运行，不该被覆盖。
     prior_items: tuple[Mapping[str, Any], ...] = ()
+    frozen_qa_snapshot: Mapping[str, Any] | None = None
     import_timeout: int = 7200
     turn_timeout: int = 900
     qa_concurrency: int = 0
@@ -563,8 +569,23 @@ class RunExecution:
         scope_id: str,
         album_id: str,
     ) -> dict[str, Any]:
-        rows = [] if request.mode == "build" else self.albums.qa_rows(album_id, request.qa_set)
+        if request.frozen_qa_snapshot is not None:
+            snapshot = copy.deepcopy(dict(request.frozen_qa_snapshot))
+            if snapshot.get("album_id") != album_id or snapshot.get("qa_set") != request.qa_set:
+                raise ValueError("resumed QA snapshot belongs to another dataset")
+            if qa_fingerprint(snapshot["rows"]) != snapshot.get("definition_sha256"):
+                raise ValueError("resumed QA snapshot fingerprint mismatch")
+        else:
+            rows = [] if request.mode == "build" else self.albums.qa_rows(album_id, request.qa_set)
+            snapshot = {
+                "album_id": album_id,
+                "qa_set": request.qa_set,
+                **copy.deepcopy((manifest.get("qa_set_versions") or {}).get(request.qa_set) or {}),
+                "definition_sha256": qa_fingerprint(rows),
+                "rows": copy.deepcopy(rows),
+            }
         return {
+            "qa_snapshot": snapshot,
             "metrics_contract_version": 2,
             "build_revision": self.runtime_snapshot.build_revision
             if self.runtime_snapshot
@@ -589,7 +610,7 @@ class RunExecution:
                 self.runtime_snapshot.connection().get("execution_budgets") if self.runtime_snapshot else None
             ),
             "qa_set": request.qa_set,
-            "qa_count": len(rows),
+            "qa_count": len(snapshot["rows"]),
             "scope_id": scope_id,
             "scope_name": scope_id,
             "sentrix_url": request.sentrix_url,
@@ -608,7 +629,9 @@ class RunExecution:
             "rejudge": None,
             "memory_profile": None,
             "input_integrity": self.albums.integrity(
-                album_id, manifest, "" if request.mode == "build" else request.qa_set
+                album_id,
+                manifest,
+                "" if request.mode == "build" or request.frozen_qa_snapshot is not None else request.qa_set,
             ),
             "hardware_snapshots": {"start": None, "end": None},
             "status": "pending",
@@ -1613,10 +1636,12 @@ class RunExecution:
         if health_error:
             raise RuntimeError(f"model service is unhealthy before QA evaluation: {health_error}")
         scope_id = str(state.get("scope_id"))
-        album_id = str(state.get("album_id"))
         assets = self.client.list_assets(scope_id=scope_id, limit=1000)
         assets_by_name = index_assets_by_name(assets)
-        rows = self.albums.qa_rows(album_id, request.qa_set)
+        snapshot = state.get("qa_snapshot")
+        if not snapshot or "rows" not in snapshot:
+            raise RuntimeError("run is missing its frozen QA input")
+        rows = copy.deepcopy(snapshot["rows"])
         resolved = self._resolve_qa_concurrency(request, state)
         concurrency = resolved.effective
         judge = self._judge
@@ -1927,6 +1952,7 @@ class RunExecution:
                 last_progress = polled.get("public_progress") or []
                 turn_records.append(
                     {
+                        **{key: turn_definition[key] for key in PASSTHROUGH_FIELDS if key in turn_definition},
                         "index": turn_index,
                         "conversation_id": conversation_id,
                         "context_turn_count": turn_index,

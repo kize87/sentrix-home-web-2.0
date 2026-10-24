@@ -84,6 +84,7 @@ export interface QaSummaryView {
 /** `qaPage.facets`（1.0 逐题筛选下拉的候选值来源 `:3449-3455`）。 */
 export interface QaFacets {
   task_types?: string[];
+  question_types?: string[];
   tags?: string[];
   angles?: string[];
   difficulties?: string[];

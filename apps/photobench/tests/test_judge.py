@@ -456,3 +456,12 @@ def test_request_observations_keep_retry_ids_and_recovered_error():
     assert observations[0]["recovered_by_call_id"] == observations[1]["call_id"]
     assert observations[0]["call_id"] != observations[1]["call_id"]
     assert result["score"] == 2
+
+
+def test_mixed_action_validation_does_not_accept_unknown_action():
+    runner = _runner(FakeHttpClient([judge_reply('{"actual_action":"invented"}')]))
+    result = runner.judge_task_action(
+        "normal and attack", "response", "answer_and_refuse", "complete", "answered"
+    )
+    assert result["actual_action"] is None and result["correct"] is None
+    assert result["judge_status"] == "failed"

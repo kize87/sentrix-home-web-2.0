@@ -568,7 +568,7 @@ def test_task_aliases_merge_before_counting_and_filters_exports_share_the_catego
     cases = [case_from_item(row, i) for i, row in enumerate(raw)]
     r = report(cases)
     assert raw == before
-    assert r["rule_version"] == 4
+    assert r["rule_version"] == 5
     media, behavior = r["groups"]["content_type"]
     assert media == {
         "value": "T1_retrieve_media",
@@ -588,8 +588,9 @@ def test_task_aliases_merge_before_counting_and_filters_exports_share_the_catego
     legacy = copy.deepcopy(cases[0])
     legacy["dimension_labels"]["task_type"] = ["T1_media_retrieval"]
     assert matches(legacy, {"task_type": "T1_retrieve_media"})
-    # Task aliases must not collapse distinct question forms or GT definitions.
-    assert cases[0]["identity"] != cases[1]["identity"]
+    # Annotation-only changes are distinct from changes to questions or evidence.
+    assert cases[0]["identity"] == cases[1]["identity"]
+    assert cases[0]["annotation_fingerprint"] != cases[1]["annotation_fingerprint"]
     assert (
         case_from_item(item(question_type="media_retrieval"), 0)["dimensions"]["question_type"]
         == "media_retrieval"
@@ -654,7 +655,7 @@ def test_content_behavior_and_scenarios_have_separate_denominators_and_preserve_
     assert raw == before
     assert set(r["groups"]) == {
         "content_type",
-        "angle",
+        "content_subtype",
         "difficulty",
         "answerability",
         "media_type",

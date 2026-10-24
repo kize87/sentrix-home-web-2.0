@@ -1,3 +1,4 @@
+import { taxonomyLabel } from "../../lib/qaTaxonomy.ts";
 /**
  * 单题卡（列表项 + 展开体）。移植 1.0 `App.vue:3460-3674`。
  *
@@ -196,11 +197,11 @@ function QaItemDetail({
   return (
     <>
       <div className="qa-meta-tags">
-        {detail.task_type ? <span>{detail.task_type}</span> : null}
-        {detail.question_type ? <span>{detail.question_type}</span> : null}
+        {detail.task_type ? <span>{taxonomyLabel(detail.task_type)}</span> : null}
+        {detail.question_type ? <span>{taxonomyLabel(detail.question_type)}</span> : null}
         {detail.angle ? <span>{detail.angle}</span> : null}
-        {detail.difficulty ? <span>{detail.difficulty}</span> : null}
-        {detail.answerability ? <span>{detail.answerability}</span> : null}
+        {detail.difficulty ? <span>{taxonomyLabel(detail.difficulty)}</span> : null}
+        {detail.answerability ? <span>{taxonomyLabel(detail.answerability)}</span> : null}
         {(detail.tags ?? []).map((tag) => (
           <span key={tag} className="qa-run-tag">
             {tag}

@@ -413,6 +413,13 @@ paths:
           type: string
           default: ''
           title: Task Type
+      - name: question_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Question Type
       - name: tag
         in: query
         required: false
@@ -918,6 +925,24 @@ paths:
           type: string
           default: ''
           title: Content Type
+      - name: content_subtype
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Content Subtype
+      - name: content_unit
+        in: query
+        required: false
+        schema:
+          enum:
+          - ''
+          - qa
+          - turn
+          type: string
+          default: ''
+          title: Content Unit
       - name: test_scenario
         in: query
         required: false
@@ -1083,6 +1108,24 @@ paths:
           type: string
           default: ''
           title: Content Type
+      - name: content_subtype
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Content Subtype
+      - name: content_unit
+        in: query
+        required: false
+        schema:
+          enum:
+          - ''
+          - qa
+          - turn
+          type: string
+          default: ''
+          title: Content Unit
       - name: test_scenario
         in: query
         required: false
@@ -1414,6 +1457,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/qa-taxonomy:
+    get:
+      tags:
+      - datasets
+      summary: Qa Taxonomy
+      description: The versioned dictionary used by QA files, filters and analysis.
+      operationId: qa_taxonomy_api_v1_qa_taxonomy_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QaTaxonomyResponse'
   /api/v1/memory-spaces:
     get:
       tags:
@@ -1884,6 +1941,21 @@ components:
       - rows
       - note
       title: ComparisonReport
+    ContentTask:
+      properties:
+        label:
+          type: string
+          title: Label
+        subtypes:
+          additionalProperties:
+            type: string
+          type: object
+          title: Subtypes
+      type: object
+      required:
+      - label
+      - subtypes
+      title: ContentTask
     DiagnosisReport:
       properties:
         parent_job:
@@ -2303,8 +2375,102 @@ components:
       additionalProperties: true
       type: object
       title: PhaseProgressProjection
+    QaTaxonomyResponse:
+      properties:
+        version:
+          type: string
+          title: Version
+        schema_version:
+          type: string
+          title: Schema Version
+        tasks:
+          additionalProperties:
+            $ref: '#/components/schemas/ContentTask'
+          type: object
+          title: Tasks
+        actions:
+          additionalProperties:
+            type: string
+          type: object
+          title: Actions
+        answerability:
+          additionalProperties:
+            type: string
+          type: object
+          title: Answerability
+        difficulty:
+          additionalProperties:
+            type: string
+          type: object
+          title: Difficulty
+        special:
+          additionalProperties:
+            type: string
+          type: object
+          title: Special
+      type: object
+      required:
+      - version
+      - schema_version
+      - tasks
+      - actions
+      - answerability
+      - difficulty
+      - special
+      title: QaTaxonomyResponse
     RunItemObservation:
       properties:
+        task_type:
+          anyOf:
+          - type: string
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Task Type
+        question_type:
+          anyOf:
+          - type: string
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Question Type
+        expected_action:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Expected Action
+        answerability:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Answerability
+        injection:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Injection
+        difficulty:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Difficulty
+        qa_schema_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Qa Schema Version
+        taxonomy_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Taxonomy Version
+        dataset_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dataset Version
         judge:
           anyOf:
           - $ref: '#/components/schemas/JudgeObservation'

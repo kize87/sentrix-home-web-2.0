@@ -25,6 +25,7 @@ from photobench.application.config.service import ConfigService
 from photobench.application.run_execution.service import RunRequest
 from photobench.application.runs.index import RunIndex
 from photobench.application.runs.suites import RunSuites
+from photobench.domain.datasets.qa_taxonomy import qa_fingerprint
 from photobench.domain.errors import InvalidRequestError
 from photobench.infrastructure.config.env import DotenvSecretStore
 from photobench.infrastructure.config.files import JsonConfigStore
@@ -579,6 +580,16 @@ def _cancelled_state(**over: Any) -> dict[str, Any]:
             {"qa_id": "q2", "execution_status": "scheduled"},
             {"qa_id": "q3", "execution_status": "running"},
         ],
+    }
+    rows = [
+        {"qa_id": f"q{i}", "question": f"original question {i}", "answer": "original reference"}
+        for i in range(1, 4)
+    ]
+    state["qa_snapshot"] = {
+        "album_id": "album-x",
+        "qa_set": "qa-1",
+        "rows": rows,
+        "definition_sha256": qa_fingerprint(rows),
     }
     state.update(over)
     return state

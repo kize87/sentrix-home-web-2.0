@@ -1,3 +1,4 @@
+import { taxonomyLabels } from "./qaTaxonomy.ts";
 // 移植自 1.0 `services/photobench/frontend/src/App.vue`（只读，唯一权威）的纯格式化 / 标签函数。
 //
 // 口径纪律：`-` / `""` / `"unknown"` / `"未记录"` / `"未分类"` 在 1.0 里各不相同，
@@ -136,6 +137,7 @@ export function statusLabel(status: unknown): string {
 /** 1.0 `:556-558` —— 映射未命中时回 `未记录`（**不**回原值；与 `statusLabel` 不同）。 */
 export function actionLabel(value: unknown): string {
   const labels: Record<string, string> = { answer: "回答", refuse: "拒答", clarify: "澄清", none: "无有效行为" };
+  if (value === "answer_and_refuse") return taxonomyLabels.answer_and_refuse!;
   return labels[str(value)] || "未记录";
 }
 
