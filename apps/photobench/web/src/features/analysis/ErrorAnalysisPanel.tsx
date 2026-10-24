@@ -115,7 +115,7 @@ function CaseCard({
         />{" "}
         <span className={`analysis-outcome outcome-${c.score ?? "None"}`}>{scoreLabel(c.score)}</span>{" "}
         {c.question || c.qa_id || c.index}
-        <small>{c.qa_id} · {displayLabel(c.dimensions.task_type || "unknown")} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
+        <small>{c.qa_id} · {(c.dimensions.content_type === "unknown" ? "未标注内容题型" : displayLabel(c.dimensions.content_type || "unknown"))} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
       </summary>
       <h5>问题</h5>
       <p>{c.question}</p>
@@ -131,7 +131,7 @@ function CaseCard({
       {c.turns.map((t) => (
         <div key={t.turn}>
           第{t.turn + 1}轮：预期 {t.expected ? displayLabel(t.expected) : "未记录"} → 实际{" "}
-          {t.actual ? displayLabel(t.actual) : "未记录"}；结束原因 {t.termination_reason ? displayLabel(t.termination_reason) : "未记录"}
+          {t.actual ? displayLabel(t.actual) : "未记录"}；{t.behavior_correct === null ? "行为未判定" : t.behavior_correct ? "行为符合预期" : "行为不符合预期"}；结束原因 {t.termination_reason ? displayLabel(t.termination_reason) : "未记录"}
           <p>{t.judge_reason}</p>
         </div>
       ))}
@@ -411,15 +411,10 @@ export function ErrorAnalysisPanel({
     });
   const filterOptions: Record<string, [string, string[][]]> = r ? {
                   code: ["运行异常类别", r.errors.map((x) => [x.code, x.label])],
-                  question_type: [
-                    "题目形式",
-                    (r.groups.question_type || []).map((x) => [
-                      x.value,
-                      displayLabel(x.value),
-                    ]),
-                  ],
-                  ...Object.fromEntries(Object.entries(dimensions).filter(([key]) => !["question_type", "expected_action"].includes(key)).map(([key, label]) => [key, [label, (r.groups[key] || []).map(x => [x.value, displayLabel(x.value)])]])),
-                  score: ["回答结果", [...scores.map(x => [x.value, x.label]), ["low", "未完全答对（0/1分）"]]],
+                  ...Object.fromEntries(Object.entries(dimensions).map(([key, label]) => [key, [label, (r.groups[key] || []).map(x => [x.value, key === "content_type" && x.value === "unknown" ? "未标注内容题型" : displayLabel(x.value)])]])),
+                  test_scenario: ["测试场景", (r.behavior_scenarios || []).map(x => [x.value, x.value === "unknown" ? "未标注专项场景" : displayLabel(x.value)])],
+                  behavior_result: ["行为判定", [["correct", "符合预期"], ["incorrect", "不符合预期"], ["missing", "未判定"]]],
+                  score: ["任务完成质量", [...scores.map(x => [x.value, x.label]), ["low", "未得满分（0/1分）"]]],
                   anomaly: ["运行异常", [["yes", "发生过异常"], ["no", "未记录异常"]]],
                   recovery: [
                     "恢复状态",
@@ -545,8 +540,8 @@ export function ErrorAnalysisPanel({
           )}
           {r && (
             <>
-              <h3>本轮答题表现</h3>
-              <p className="analysis-lead">答对率 <b>{percent(r.counts.score_2 || 0, r.denominators.quality_valid)}</b> · 有效评分 {r.denominators.quality_valid}/{r.item_count} 题</p>
+              <h3>本轮任务完成质量</h3>
+              <p className="analysis-lead">满分率 <b>{percent(r.counts.score_2 || 0, r.denominators.quality_valid)}</b> · 有效评分 {r.denominators.quality_valid}/{r.item_count} 题</p>
               <div className="analysis-stats">
                 <button className="analysis-stat" onClick={() => browseCases({})}><span>全部题目</span><strong>{r.item_count}</strong></button>
                 {scores.map(score => <button key={score.value} className={`analysis-stat outcome-${score.value}`} onClick={() => browseCases({ score: score.value })}>
@@ -599,7 +594,7 @@ export function ErrorAnalysisPanel({
               <AnalysisCharts report={r} filter={browseCases} />
               <details>
                 <summary>全部分类明细</summary>
-                {Object.entries(r.groups).map(([dim, rows]) => (
+                {Object.entries(r.groups).filter(([dim]) => dim in dimensions).map(([dim, rows]) => (
                   <div key={dim}>
                     <h4>{dimensions[dim] || dim}</h4>
                     <table>
@@ -607,14 +602,14 @@ export function ErrorAnalysisPanel({
                         <tr>
                           <th>类别</th>
                           <th>题数</th>
-                          <th>答对</th><th>部分答对</th><th>答错</th><th>有效评分</th>
+                          <th>2分</th><th>1分</th><th>0分</th><th>有效评分</th>
                           <th>未评分</th>
                         </tr>
                       </thead>
                       <tbody>
                         {rows.map((x) => (
                           <tr key={x.value}>
-                            <td title={x.value}>{displayLabel(x.value)}</td>
+                            <td title={x.value}>{(dim === "content_type" && x.value === "unknown" ? "未标注内容题型" : displayLabel(x.value))}</td>
                             <td>{x.total}</td>
                             <td>{x.score_2 || 0}</td><td>{x.score_1 || 0}</td><td>{x.score_0 || 0}</td><td>{x.total - Number(x.score_None || 0)}</td>
                             <td>{x.score_None || 0}</td>
@@ -639,10 +634,10 @@ export function ErrorAnalysisPanel({
               </details>
               <h3 ref={caseHeading} tabIndex={-1} className="analysis-case-heading">题目列表</h3>
               <div className="analysis-toolbar">
-                {Object.entries(filterOptions).filter(([key]) => ["score", "task_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}
+                {Object.entries(filterOptions).filter(([key]) => ["score", "content_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}
                 <details className="analysis-extra-filters">
-                  <summary>更多筛选{Object.entries(filters).filter(([key, value]) => value && !["score", "task_type", "code"].includes(key)).length > 0 ? " · 已设置" : ""}</summary>
-                  <div className="analysis-toolbar">{Object.entries(filterOptions).filter(([key]) => !["score", "task_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}</div>
+                  <summary>更多筛选{Object.entries(filters).filter(([key, value]) => value && !["score", "content_type", "code"].includes(key)).length > 0 ? " · 已设置" : ""}</summary>
+                  <div className="analysis-toolbar">{Object.entries(filterOptions).filter(([key]) => !["score", "content_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}</div>
                 </details>
                 <button
                   className="btn compact"
@@ -662,12 +657,12 @@ export function ErrorAnalysisPanel({
               <div className="analysis-toolbar analysis-bulk">
                 <button className="btn compact" disabled={pending || casesLoading || !data.items.length || !!job?.stale} onClick={() => { setSelected(data.items.map(c => c.index)); setSelectionNote("已选择本页全部题目，仅选题，尚未发送给分析模型。"); }}>全选本页</button>
                 <button className="btn compact" disabled={pending || !!job?.stale} onClick={() => void chooseBatch({}, "当前筛选结果")}>选择当前筛选（最多20题）</button>
-                <button className="btn compact" disabled={pending || !!job?.stale} onClick={() => void chooseBatch({ score: "low" }, "未完全答对题")}>选择未完全答对题</button>
+                <button className="btn compact" disabled={pending || !!job?.stale} onClick={() => void chooseBatch({ score: "low" }, "未得满分题")}>选择未得满分题</button>
                 <button className="btn compact" disabled={pending || !!job?.stale} onClick={() => void chooseBatch({ anomaly: "yes" }, "运行异常题")}>选择运行异常题</button>
                 <button className="btn compact" disabled={pending || !!job?.stale || !diagnosed.length} onClick={() => void chooseBatch({}, "下一批未分析题", true)}>选择下一批未分析题</button>
                 <button className="btn compact" onClick={() => { setSelected([]); setSelectionNote(""); }}>清空选择</button>
               </div>
-              <p className="analysis-hint">批量选择沿用当前分类，每批最多20题。异常题可能答对。</p>
+              <p className="analysis-hint">批量选择沿用当前分类，每批最多20题。异常题也可能得满分。</p>
               {selectionNote && <p role="status">{selectionNote}</p>}
               {casesLoading ? null : data.total === 0 ? <p>没有符合当前条件的题目。可清空筛选查看全部。</p> : data.items.map((c) => (
                 <CaseCard

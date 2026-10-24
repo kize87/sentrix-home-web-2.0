@@ -174,11 +174,11 @@ S11 做服务启停时接管的边界就是这三块。
 | `photobench/application/error_analysis/__init__.py` | Analysis use cases. | application | — | — |
 | `photobench/application/error_analysis/service.py` | Analysis orchestration and explicit provider selection; facts stay immutable. | application | `photobench/application/config/service.py`、`photobench/domain/error_analysis/ports.py` | `photobench/bootstrap/container.py` |
 | `photobench/domain/error_analysis/__init__.py` | Versioned, evidence-based result analysis; never changes evaluation facts. | domain | — | — |
-| `photobench/domain/error_analysis/exports.py` | Offline reports: escaped HTML, native charts and spreadsheet-safe CSV. | domain | — | `photobench/infrastructure/error_analysis/backend.py` |
+| `photobench/domain/error_analysis/exports.py` | Offline reports: escaped HTML, native charts and spreadsheet-safe CSV. | domain | `photobench/domain/error_analysis/taxonomy.py` | `photobench/infrastructure/error_analysis/backend.py` |
 | `photobench/domain/error_analysis/ports.py` | Managed analysis jobs; implementation owns processes, snapshots and artifacts. | domain | — | `photobench/application/error_analysis/service.py`、`photobench/bootstrap/container.py` |
 | `photobench/domain/error_analysis/rules.py` | Pure case extraction and aggregation. Counts are observations, not causal claims. | domain | `photobench/domain/error_analysis/taxonomy.py`、`photobench/domain/runs/analysis.py` | `photobench/infrastructure/error_analysis/backend.py`、`photobench/infrastructure/error_analysis/worker.py` |
 | `photobench/infrastructure/error_analysis/__init__.py` | Local artifacts and spawn-managed analysis workers. | infrastructure | — | — |
 | `photobench/infrastructure/error_analysis/backend.py` | Durable artifacts with a single spawn worker, cancellation and benchmark priority. | infrastructure | `photobench/domain/error_analysis/exports.py`、`photobench/domain/error_analysis/rules.py`、`photobench/infrastructure/error_analysis/worker.py` | `photobench/bootstrap/container.py` |
 | `photobench/infrastructure/error_analysis/worker.py` | One process per analysis task; streams committed JSONL, never changes raw runs. | infrastructure | `photobench/domain/error_analysis/rules.py`、`photobench/domain/runs/judge.py`、`photobench/infrastructure/results/store.py` | `photobench/infrastructure/error_analysis/backend.py` |
 
-| `photobench/domain/error_analysis/taxonomy.py` | 明确任务别名归一，原始QA与GT保留。 | domain | — | `photobench/domain/error_analysis/rules.py` |
+| `photobench/domain/error_analysis/taxonomy.py` | 明确别名、内容任务与测试场景分离；原始QA与GT保留。 | domain | — | `photobench/domain/error_analysis/exports.py`、`photobench/domain/error_analysis/rules.py` |

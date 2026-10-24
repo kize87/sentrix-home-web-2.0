@@ -39,6 +39,9 @@ export interface AnalysisCase {
   signals: string[];
   text_truncated: boolean;
 }
+export interface BehaviorGroup {
+  value: string; total: number; valid: number; correct: number; incorrect: number; missing: number;
+}
 export interface AnalysisReport {
   schema_version: number;
   rule_version: number;
@@ -61,7 +64,9 @@ export interface AnalysisReport {
     string,
     ({ value: string; total: number } & Record<string, string | number>)[]
   >;
-  heatmap: { question_type: string; code: string; count: number }[];
+  behavior_groups?: BehaviorGroup[];
+  behavior_scenarios?: BehaviorGroup[];
+  heatmap: { content_type: string; code: string; count: number }[];
   behavior_matrix: { expected: string; actual: string; count: number }[];
   definitions: string[];
 }

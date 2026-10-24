@@ -911,6 +911,32 @@ paths:
           type: string
           default: ''
           title: Anomaly
+      - name: content_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Content Type
+      - name: test_scenario
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Test Scenario
+      - name: behavior_result
+        in: query
+        required: false
+        schema:
+          enum:
+          - ''
+          - correct
+          - incorrect
+          - missing
+          type: string
+          default: ''
+          title: Behavior Result
       responses:
         '200':
           description: Successful Response
@@ -1050,6 +1076,32 @@ paths:
           type: string
           default: ''
           title: Anomaly
+      - name: content_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Content Type
+      - name: test_scenario
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Test Scenario
+      - name: behavior_result
+        in: query
+        required: false
+        schema:
+          enum:
+          - ''
+          - correct
+          - incorrect
+          - missing
+          type: string
+          default: ''
+          title: Behavior Result
       responses:
         '200':
           description: Successful Response
@@ -1520,6 +1572,16 @@ components:
             type: object
           type: array
           title: Errors
+        behavior_groups:
+          items:
+            $ref: '#/components/schemas/BehaviorGroup'
+          type: array
+          title: Behavior Groups
+        behavior_scenarios:
+          items:
+            $ref: '#/components/schemas/BehaviorGroup'
+          type: array
+          title: Behavior Scenarios
         behavior_matrix:
           items:
             additionalProperties: true
@@ -1645,6 +1707,35 @@ components:
       - recovery
       - basis
       title: AnomalyEvent
+    BehaviorGroup:
+      properties:
+        value:
+          type: string
+          title: Value
+        total:
+          type: integer
+          title: Total
+        valid:
+          type: integer
+          title: Valid
+        correct:
+          type: integer
+          title: Correct
+        incorrect:
+          type: integer
+          title: Incorrect
+        missing:
+          type: integer
+          title: Missing
+      type: object
+      required:
+      - value
+      - total
+      - valid
+      - correct
+      - incorrect
+      - missing
+      title: BehaviorGroup
     CasePage:
       properties:
         items:

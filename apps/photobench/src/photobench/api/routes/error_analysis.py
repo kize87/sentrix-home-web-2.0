@@ -59,6 +59,15 @@ class CaseReference(BaseModel):
     signals: list[str]
 
 
+class BehaviorGroup(BaseModel):
+    value: str
+    total: int
+    valid: int
+    correct: int
+    incorrect: int
+    missing: int
+
+
 class AnalysisReport(BaseModel):
     model_config = ConfigDict(extra="allow")
     schema_version: int
@@ -72,6 +81,8 @@ class AnalysisReport(BaseModel):
     denominators: dict[str, int]
     groups: dict[str, list[dict[str, Any]]]
     errors: list[dict[str, Any]]
+    behavior_groups: list[BehaviorGroup] = Field(default_factory=list)
+    behavior_scenarios: list[BehaviorGroup] = Field(default_factory=list)
     behavior_matrix: list[dict[str, Any]]
     heatmap: list[dict[str, Any]]
     definitions: list[str]
@@ -134,6 +145,9 @@ def filters(
     media_type: str = "",
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
+    content_type: str = "",
+    test_scenario: str = "",
+    behavior_result: Literal["", "correct", "incorrect", "missing"] = "",
 ) -> dict[str, Any]:
     return {
         "code": code,
@@ -150,6 +164,9 @@ def filters(
         "media_type": media_type,
         "conversation_type": conversation_type,
         "anomaly": anomaly,
+        "content_type": content_type,
+        "test_scenario": test_scenario,
+        "behavior_result": behavior_result,
     }
 
 
@@ -200,6 +217,9 @@ def cases(
     media_type: str = "",
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
+    content_type: str = "",
+    test_scenario: str = "",
+    behavior_result: Literal["", "correct", "incorrect", "missing"] = "",
 ) -> dict[str, Any]:
     return get_container(request).analysis_backend.cases(
         job_id,
@@ -218,6 +238,9 @@ def cases(
             media_type,
             conversation_type,
             anomaly,
+            content_type,
+            test_scenario,
+            behavior_result,
         ),
         page,
         page_size,
@@ -243,6 +266,9 @@ def export(
     media_type: str = "",
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
+    content_type: str = "",
+    test_scenario: str = "",
+    behavior_result: Literal["", "correct", "incorrect", "missing"] = "",
 ) -> Response:
     body = get_container(request).analysis_backend.export(
         job_id,
@@ -262,6 +288,9 @@ def export(
             media_type,
             conversation_type,
             anomaly,
+            content_type,
+            test_scenario,
+            behavior_result,
         ),
     )
     media = {"html": "text/html", "json": "application/json", "csv": "text/csv"}[format]

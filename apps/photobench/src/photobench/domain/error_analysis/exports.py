@@ -9,8 +9,12 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from photobench.domain.error_analysis.taxonomy import QUALITY_DIMENSIONS
+
 DISPLAY_LABELS = {
-    "task_type": "任务类型",
+    "task_type": "原始任务标签",
+    "content_type": "内容题型",
+    "test_scenario": "测试场景",
     "question_type": "题目形式",
     "angle": "考察角度",
     "difficulty": "难度",
@@ -39,8 +43,12 @@ DISPLAY_LABELS = {
     "answerable_after_clarification": "澄清后可回答",
     "needs_clarification": "需澄清",
     "unknown": "未标注／未知",
+    "answer": "直接回答",
+    "refuse": "拒答",
+    "clarify": "澄清",
+    "none": "未作答",
 }
-SCORE_LABELS = {"2": "答对（2分）", "1": "部分答对（1分）", "0": "答错（0分）", "None": "未评分"}
+SCORE_LABELS = {"2": "满分（2分）", "1": "部分完成（1分）", "0": "未完成（0分）", "None": "未评分"}
 
 
 def _escape(value: Any) -> str:
@@ -102,6 +110,9 @@ def export_report(
                     "execution",
                     "question_type",
                     "task_type",
+                    "content_type",
+                    "test_scenario",
+                    "behavior_turns",
                     "angle",
                     "difficulty",
                     "outcome",
@@ -117,6 +128,9 @@ def export_report(
                         c["execution"],
                         c["dimensions"]["question_type"],
                         c["dimensions"].get("task_type", "unknown"),
+                        c["dimensions"].get("content_type", "unknown"),
+                        c["dimensions"].get("test_scenario", "unknown"),
+                        json.dumps(c["turns"], ensure_ascii=False),
                         c["dimensions"].get("angle", "unknown"),
                         c["dimensions"].get("difficulty", "unknown"),
                         SCORE_LABELS[str(c["score"])],
@@ -149,24 +163,29 @@ def export_report(
         + _table(["分母", "数量"], [[k, v] for k, v in report["denominators"].items()])
     )
     body += (
-        "<h2>回答结果（全部题目）</h2><p>答对=2分，部分答对=1分，答错=0分；未评分不计为答错。运行异常与回答对错独立统计，异常也可能恢复后答对。</p>"
+        "<h2>任务完成质量（全部题目）</h2><p>2分：完成，1分：部分完成，0分：未完成。适用于回答、拒答和澄清；行为是否符合预期另行统计。</p>"
         + _table(
-            ["回答结果", "题数"],
+            ["任务完成质量", "题数"],
             [[label, report["counts"].get("score_" + value, 0)] for value, label in SCORE_LABELS.items()],
         )
     )
     maximum = max((r["affected_items"] for r in report["errors"]), default=1)
-    body += "<h2>运行异常分布（包含答对题，类别可重叠）</h2>"
+    body += "<h2>运行异常分布（独立于质量分，类别可重叠）</h2>"
     for r in report["errors"]:
         body += (
             f'<div>{_escape(r["label"])} <meter min="0" max="{maximum}" '
             f'value="{r["affected_items"]}"></meter> {r["affected_items"]}题 / {r["events"]}次；'
             f"最终执行失败 {r['final_failed_items']}题，已恢复 {r['recovered_items']}题</div>"
         )
-    for dim, rows in sorted(report["groups"].items(), key=lambda pair: pair[0] != "task_type"):
+    for dim in QUALITY_DIMENSIONS:
+        rows = report["groups"].get(dim, [])
         body += f"<h2>样本分布与表现：{_escape(DISPLAY_LABELS.get(dim, dim))}</h2>"
         for row in rows:
-            label = _escape(DISPLAY_LABELS.get(row["value"], row["value"]))
+            label = _escape(
+                "未标注内容题型"
+                if dim == "content_type" and row["value"] == "unknown"
+                else DISPLAY_LABELS.get(row["value"], row["value"])
+            )
             body += (
                 f"<p>{label} · 全部题目{row['total']} · 未评分{row.get('score_None', 0)}</p>"
                 '<div class="stack">'
@@ -177,15 +196,84 @@ def export_report(
                 label = SCORE_LABELS[score]
                 body += f'<span class="s{score}" style="width:{width:.3f}%">{label} {n}</span>'
             body += "</div>"
-    body += "<h2>题型 × 错误类别</h2>" + _table(
-        ["题型", "类别（可重叠）", "受影响题数"],
-        [[r["question_type"], r["code"], r["count"]] for r in report["heatmap"]],
+    if report["rule_version"] < 4:
+        body += "<p>旧分类口径：请重新生成分析以查看内容题型与回答行为。</p>"
+    body += "<h2>按得分看内容题型</h2>"
+    content = report["groups"].get("content_type", [])
+    for score, label in SCORE_LABELS.items():
+        total = report["counts"].get("score_" + score, 0)
+        missing = sum(r.get("score_" + score, 0) for r in content if r["value"] == "unknown")
+        valid = total - missing
+        body += (
+            f"<h3>{label}</h3><p>全部{total}题；已标注内容题型{valid}题；未标注{missing}题。"
+            "占比使用已标注题目。</p>"
+        )
+        body += _table(
+            ["内容题型", "题数", "占已标注题目的比例"],
+            [
+                [
+                    DISPLAY_LABELS.get(r["value"], r["value"]),
+                    r.get("score_" + score, 0),
+                    f"{r.get('score_' + score, 0) / valid * 100:.1f}%" if valid else "未覆盖",
+                ]
+                for r in content
+                if r["value"] != "unknown"
+            ],
+        )
+    body += "<h2>内容题型 × 运行异常</h2>" + _table(
+        ["内容题型", "类别（可重叠）", "受影响题数"],
+        [
+            [
+                DISPLAY_LABELS.get(
+                    r.get("content_type", r.get("question_type", "unknown")),
+                    r.get("content_type", r.get("question_type", "unknown")),
+                ),
+                r["code"],
+                r["count"],
+            ]
+            for r in report["heatmap"]
+        ],
     )
-    body += "<h2>预期 × 实际行为（对话轮）</h2>" + _table(
+    body += "<h2>回答行为（按对话轮）</h2><p>行为是否符合预期与质量分独立。点击案例筛选按题去重。</p>"
+    for key, title in (("behavior_groups", "预期行为分布"), ("behavior_scenarios", "测试场景")):
+        body += f"<h3>{title}</h3>" + _table(
+            [
+                "类别",
+                "轮数",
+                "占全部轮数" if key == "behavior_groups" else "场景可重叠",
+                "符合",
+                "不符合",
+                "未判定",
+                "符合率 / 有效判定",
+            ],
+            [
+                [
+                    DISPLAY_LABELS.get(r["value"], r["value"]),
+                    r["total"],
+                    f"{r['total'] / report['denominators']['turns'] * 100:.1f}%"
+                    if report["denominators"]["turns"] and key == "behavior_groups"
+                    else "—",
+                    r["correct"],
+                    r["incorrect"],
+                    r["missing"],
+                    (f"{r['correct'] / r['valid'] * 100:.1f}%" if r["valid"] else "未覆盖")
+                    + f" / {r['valid']}轮",
+                ]
+                for r in report.get(key, [])
+            ],
+        )
+    body += "<h2>预期 × 实际行为（全部对话轮，包含未判定）</h2>" + _table(
         ["预期", "实际", "轮数"],
-        [[r["expected"], r["actual"], r["count"]] for r in report["behavior_matrix"]],
+        [
+            [
+                DISPLAY_LABELS.get(r["expected"], r["expected"]),
+                DISPLAY_LABELS.get(r["actual"], r["actual"]),
+                r["count"],
+            ]
+            for r in report["behavior_matrix"]
+        ],
     )
-    body += "<p>没有样本的行为显示为未覆盖；未知标签不计入有效行为正确率。</p><h2>筛选案例</h2>"
+    body += "<h2>筛选案例</h2>"
     for c in cases:
         body += (
             f"<details><summary>{_escape(c['qa_id'])} · {_escape(c['execution'])} · "

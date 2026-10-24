@@ -164,7 +164,9 @@ def test_missing_gt_behaviors_scores_are_missing_and_multilabel_overlaps_explici
     assert {"gt", "retrieval_gt", "trace", "quality_score", "behavior"} <= set(c["missing"])
     assert r["denominators"]["quality_valid"] == 0
     assert r["denominators"]["behavior_valid"] == 0
-    assert [g["value"] for g in r["groups"]["question_type"]] == ["a", "b"]
+    assert c["dimension_labels"]["question_type"] == ["a", "b"]
+    assert "question_type" not in r["groups"]
+    assert r["groups"]["content_type"][0]["value"] == "unknown"
     assert not c["signals"]
     assert matches(c, {"score": "None", "question_type": "a", "actual_action": "unknown"})
 
@@ -362,6 +364,14 @@ def test_api_contract_pagination_cancel_and_legacy_source(tmp_path: Path):
         exported = client.get(f"/api/v1/analyses/{key}/export?format=json&{selected}").json()
         assert len(exported["cases"]) == 1 and exported["filters"]["task_type"] == "T5_event_summary"
         assert client.get(f"/api/v1/analyses/{key}/cases?task_type=T3_enumeration").json()["total"] == 0
+        selected = "content_type=T5_event_summary&expected_action=answer&behavior_result=correct&score=0"
+        assert client.get(f"/api/v1/analyses/{key}/cases?{selected}").json()["total"] == 1
+        exported = client.get(f"/api/v1/analyses/{key}/export?format=json&{selected}").json()
+        assert len(exported["cases"]) == 1 and exported["filters"]["behavior_result"] == "correct"
+        assert client.get(f"/api/v1/analyses/{key}/cases?behavior_result=incorrect").json()["total"] == 0
+        assert client.get(f"/api/v1/analyses/{key}/cases?test_scenario=prompt_injection").json()["total"] == 0
+        assert client.get(f"/api/v1/analyses/{key}/cases?behavior_result=bad").status_code == 422
+
         assert client.get(f"/api/v1/analyses/{key}/cases?anomaly=yes").json()["total"] == 0
 
         assert (
@@ -544,7 +554,7 @@ def test_quality_and_classification_filters_include_correct_and_partial_without_
     r = report(cases)
     assert r["counts"]["score_2"] == 1 and r["counts"]["affected_items"] == 1
     assert r["denominators"]["quality_valid"] == 3
-    assert r["groups"]["task_type"][0]["score_2"] == 1
+    assert r["groups"]["content_type"][0]["score_2"] == 1
 
 
 def test_task_aliases_merge_before_counting_and_filters_exports_share_the_category():
@@ -558,8 +568,8 @@ def test_task_aliases_merge_before_counting_and_filters_exports_share_the_catego
     cases = [case_from_item(row, i) for i, row in enumerate(raw)]
     r = report(cases)
     assert raw == before
-    assert r["rule_version"] == 3
-    media, behavior = r["groups"]["task_type"]
+    assert r["rule_version"] == 4
+    media, behavior = r["groups"]["content_type"]
     assert media == {
         "value": "T1_retrieve_media",
         "total": 3,
@@ -604,3 +614,103 @@ def test_old_category_rule_report_is_stale_without_changing_saved_artifacts(tmp_
         assert path.read_bytes() == original
     finally:
         backend.close()
+
+
+def test_content_behavior_and_scenarios_have_separate_denominators_and_preserve_source():
+    raw = [
+        item(qa_id="wrong-fact", task_type="T2_fact_qa", judge={"score": 0}),
+        item(
+            qa_id="safety",
+            task_type="behavior",
+            question_type="prompt_injection",
+            expected_action="refuse",
+            judge={"score": 2},
+            task_judge={"actual_action": "refuse", "correct": True},
+        ),
+        item(
+            qa_id="multi",
+            task_type="behavior",
+            question_type="multi_turn_clarify",
+            expected_action="answer",
+            runtime_turns=[
+                {
+                    "expected_action": "clarify",
+                    "termination_reason": "answered",
+                    "judge": {"score": 0},
+                    "task_judge": {"actual_action": "answer", "correct": False},
+                },
+                {
+                    "expected_action": "answer",
+                    "termination_reason": "answered",
+                    "judge": {"score": 2},
+                    "task_judge": {"actual_action": "answer", "correct": True},
+                },
+            ],
+        ),
+    ]
+    before = copy.deepcopy(raw)
+    cases = [case_from_item(row, i) for i, row in enumerate(raw)]
+    r = report(cases)
+    assert raw == before
+    assert set(r["groups"]) == {
+        "content_type",
+        "angle",
+        "difficulty",
+        "answerability",
+        "media_type",
+        "conversation_type",
+    }
+    content = {g["value"]: g for g in r["groups"]["content_type"]}
+    assert content["T2_fact_qa"]["total"] == 1 and content["unknown"]["total"] == 2
+    assert cases[1]["source_labels"]["task_type"] == ["behavior"]
+    assert cases[1]["dimensions"]["test_scenario"] == "prompt_injection"
+    behaviors = {g["value"]: g for g in r["behavior_groups"]}
+    assert behaviors["answer"]["total"] == 2
+    assert behaviors["answer"]["correct"] == 2  # Wrong fact still has the correct action.
+    assert behaviors["clarify"]["total"] == behaviors["clarify"]["incorrect"] == 1
+    assert behaviors["refuse"]["total"] == behaviors["refuse"]["correct"] == 1
+    assert sum(g["total"] for g in behaviors.values()) == r["denominators"]["turns"] == 4
+    assert not matches(cases[2], {"expected_action": "clarify", "behavior_result": "correct"})
+    assert matches(cases[2], {"expected_action": "clarify", "behavior_result": "incorrect"})
+    assert matches(cases[1], {"test_scenario": "prompt_injection", "expected_action": "refuse"})
+    assert not matches(cases[1], {"test_scenario": "prompt_injection", "expected_action": "answer"})
+    assert matches(cases[0], {"score": "0", "behavior_result": "correct"})
+    html = export_report(r, cases, "html", {})
+    assert "行为判断" not in html and "按得分看内容题型" in html
+    assert "未标注内容题型" in html and "回答行为（按对话轮）" in html
+    assert "behavior_turns" in export_report(r, cases, "csv", {})
+
+
+def test_multilabel_heatmap_uses_deduplicated_content_labels_not_joined_keys():
+    c = case_from_item(
+        item(
+            task_type=["T2_fact_qa", "T1_retrieve_media", "T1_media_retrieval"],
+            question_type=["prompt_injection", "evidence_insufficient"],
+            angle="event_summary",
+        ),
+        0,
+    )
+    c["events"] = [{"code": "request_timeout", "recovery": "recovered"}]
+    r = report([c])
+    assert {x["content_type"] for x in r["heatmap"]} == {"T2_fact_qa", "T1_retrieve_media"}
+    assert all(x["count"] == 1 for x in r["heatmap"])
+    assert c["dimensions"]["angle"] == "unknown" and c["source_labels"]["angle"] == ["event_summary"]
+    assert {x["value"] for x in r["behavior_scenarios"]} == {"prompt_injection", "evidence_insufficient"}
+    assert len(r["behavior_groups"]) == 1 and r["denominators"]["turns"] == 1
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        {"actual_action": "answer", "correct": True, "judge_status": "failed"},
+        {"actual_action": "unexpected", "correct": True},
+        {"actual_action": "answer"},
+    ],
+)
+def test_failed_or_missing_behavior_judge_does_not_become_valid_from_residual_fields(task):
+    c = case_from_item(item(task_judge=task), 0)
+    r = report([c])
+    assert r["denominators"]["behavior_valid"] == 0
+    assert r["denominators"]["behavior_missing"] == 1
+    assert r["behavior_groups"][0]["missing"] == 1
+    assert matches(c, {"behavior_result": "missing"})

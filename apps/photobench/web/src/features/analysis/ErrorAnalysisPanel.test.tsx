@@ -34,7 +34,7 @@ afterEach(() => {
 });
 const report: AnalysisReport = {
   schema_version: 1,
-  rule_version: 1,
+  rule_version: 4,
   generated_at: 1,
   item_count: 1,
   source: { status: "completed" },
@@ -203,8 +203,8 @@ it("全选本页、快捷选低分及异常题只选择不发模型请求，保�
   await screen.findByLabelText("选择 q1");
   fireEvent.click(screen.getByText("全选本页"));
   expect((screen.getByLabelText("选择 q1") as HTMLInputElement).checked).toBe(true);
-  fireEvent.click(screen.getByText("选择未完全答对题"));
-  await screen.findByText(/未完全答对题：已选 20 题/);
+  fireEvent.click(screen.getByText("选择未得满分题"));
+  await screen.findByText(/未得满分题：已选 20 题/);
   expect(api).toHaveBeenCalledWith(expect.stringContaining("score=low"));
   fireEvent.click(screen.getByText("选择运行异常题"));
   await screen.findByText(/运行异常题：已选 20 题/);
@@ -259,12 +259,12 @@ it("统计点击将焦点和视口移到案例，案例在AI和对比之前；�
     expect(card.compareDocumentPosition(screen.getByRole("heading", {name: title})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }
   const calls = scrollIntoView.mock.calls.length;
-  fireEvent.change(screen.getByLabelText("回答结果"), {target: {value: "0"}});
+  fireEvent.change(screen.getByLabelText("任务完成质量"), {target: {value: "0"}});
   await waitFor(() => expect(api).toHaveBeenCalledWith(expect.stringContaining("score=0")));
   expect(scrollIntoView).toHaveBeenCalledTimes(calls);
   fireEvent.click(screen.getByText("全部题目"));
   expect(document.activeElement).toBe(heading);
   await waitFor(() => expect(screen.getByLabelText("运行异常类别")).toHaveProperty("value", ""));
-  expect(screen.getByLabelText("回答结果")).toHaveProperty("value", "");
+  expect(screen.getByLabelText("任务完成质量")).toHaveProperty("value", "");
   expect(post).not.toHaveBeenCalled();
 });

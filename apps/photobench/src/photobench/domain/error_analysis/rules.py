@@ -8,10 +8,15 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from photobench.domain.error_analysis.taxonomy import category_value
+from photobench.domain.error_analysis.taxonomy import (
+    QUALITY_DIMENSIONS,
+    category_value,
+    content_types,
+    test_scenarios,
+)
 from photobench.domain.runs.analysis import judge_score_for_summary
 
-RULE_VERSION = 3
+RULE_VERSION = 4
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -41,6 +46,8 @@ LABELS = {
 DIMENSIONS = (
     "question_type",
     "task_type",
+    "content_type",
+    "test_scenario",
     "difficulty",
     "angle",
     "answerability",
@@ -48,6 +55,10 @@ DIMENSIONS = (
     "media_type",
     "conversation_type",
 )
+
+
+def saved_labels(value: Any) -> list[str]:
+    return [str(v) for v in value] if isinstance(value, list) and value else [str(value or "unknown")]
 
 
 def fingerprint(value: Any) -> str:
@@ -271,12 +282,23 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                 "turn": ti,
                 "turn_id": turn_record.get("turn_id"),
                 "termination_reason": reason,
-                "expected": expected,
-                "actual": task.get("actual_action"),
+                "recorded_expected": expected,
+                "recorded_actual": task.get("actual_action"),
+                "expected": expected if expected in {"answer", "refuse", "clarify"} else None,
+                "actual": task.get("actual_action")
+                if task.get("judge_status") != "failed"
+                and task.get("actual_action") in {"answer", "refuse", "clarify", "none"}
+                else None,
                 "behavior_correct": task.get("correct")
-                if isinstance(task.get("correct"), bool) and task.get("judge_status") != "failed"
+                if isinstance(task.get("correct"), bool)
+                and task.get("judge_status") != "failed"
+                and expected in {"answer", "refuse", "clarify"}
+                and task.get("actual_action") in {"answer", "refuse", "clarify", "none"}
                 else None,
                 "judge_reason": str(task.get("reason") or "")[:2000],
+                "test_scenarios": test_scenarios(
+                    saved_labels(turn_record.get("question_type") or item.get("question_type"))
+                ),
                 "score": judge_score_for_summary(turn_record.get("judge")),
             }
         )
@@ -361,16 +383,22 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         media.add("image")
     if item.get("retrieval_video_ids"):
         media.add("video")
-    dimension_labels = {
-        k: [str(v) for v in item[k]]
-        if isinstance(item.get(k), list) and item[k]
-        else [str(item.get(k) or "unknown")]
-        for k in DIMENSIONS
+    source_labels = {
+        k: saved_labels(item.get(k)) for k in DIMENSIONS if k not in {"content_type", "test_scenario"}
     }
+    dimension_labels = {k: list(v) for k, v in source_labels.items()}
     dimension_labels = {
         k: list(dict.fromkeys(category_value(k, value) for value in values))
         for k, values in dimension_labels.items()
     }
+    dimension_labels["angle"] = list(
+        dict.fromkeys(
+            "unknown" if v in {"event_summary", "enumeration", "media_retrieval"} else v
+            for v in dimension_labels["angle"]
+        )
+    )
+    dimension_labels["content_type"] = content_types(dimension_labels["task_type"])
+    dimension_labels["test_scenario"] = sorted({v for t in turn_rows for v in t["test_scenarios"]})
     dimensions = {k: " / ".join(values) for k, values in dimension_labels.items()}
     dimensions.update(
         media_type="mixed" if len(media) > 1 else next(iter(media), "unknown"),
@@ -398,7 +426,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         missing.append("retrieval_gt")
     if not item.get("question_type"):
         missing.append("question_type")
-    if any(t["expected"] is None or t["actual"] is None for t in turn_rows):
+    if any(t["behavior_correct"] is None for t in turn_rows):
         missing.append("behavior")
     judge_records = turns if len(turns) > 1 else [item]
     if any(
@@ -473,6 +501,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         "execution": status,
         "dimensions": dimensions,
         "dimension_labels": dimension_labels,
+        "source_labels": source_labels,
         "events": events,
         "turns": turn_rows,
         "signals": signals,
@@ -499,7 +528,9 @@ class Aggregator:
     def __init__(self) -> None:
         self.total = 0
         self.counts: Counter[str] = Counter()
-        self.groups: dict[str, dict[str, Counter[str]]] = {k: {} for k in DIMENSIONS}
+        self.groups: dict[str, dict[str, Counter[str]]] = {k: {} for k in QUALITY_DIMENSIONS}
+        self.behavior_groups: dict[str, Counter[str]] = {}
+        self.behavior_scenarios: dict[str, Counter[str]] = {}
         self.errors: dict[str, Counter[str]] = {}
         self.matrix: Counter[tuple[str, str]] = Counter()
         self.heatmap: Counter[tuple[str, str]] = Counter()
@@ -531,7 +562,8 @@ class Aggregator:
             self.counts["missing_" + m] += 1
         for signal in case["signals"]:
             self.counts[signal] += 1
-        for dim, values in case["dimension_labels"].items():
+        for dim in QUALITY_DIMENSIONS:
+            values = case["dimension_labels"][dim]
             for value in sorted(set(values)):
                 row = self.groups[dim].setdefault(value, Counter())
                 row["total"] += 1
@@ -544,7 +576,8 @@ class Aggregator:
             row["affected_items"] += 1
             row["final_failed_items"] += case["execution"] == "failed"
             row["recovered_items"] += all(e["recovery"] == "recovered" for e in es)
-            self.heatmap[case["dimensions"]["question_type"], code] += 1
+            for value in set(case["dimension_labels"]["content_type"]):
+                self.heatmap[value, code] += 1
         if case["events"] and all(e["recovery"] == "recovered" for e in case["events"]):
             self.counts["fully_recovered_items"] += 1
         self.counts["events"] += len(case["events"])
@@ -558,13 +591,25 @@ class Aggregator:
             self.counts["turn_score_" + str(turn["score"])] += 1
             expected, actual = turn["expected"], turn["actual"]
             self.matrix[str(expected or "unknown"), str(actual or "unknown")] += 1
-            if expected in {"answer", "refuse", "clarify"} and isinstance(turn["behavior_correct"], bool):
+            valid = isinstance(turn["behavior_correct"], bool)
+            for groups, values in (
+                (self.behavior_groups, [str(expected or "unknown")]),
+                (self.behavior_scenarios, turn["test_scenarios"]),
+            ):
+                for value in set(values):
+                    row = groups.setdefault(value, Counter())
+                    row["total"] += 1
+                    row["valid"] += valid
+                    row["correct"] += valid and turn["behavior_correct"] is True
+                    row["incorrect"] += valid and turn["behavior_correct"] is False
+                    row["missing"] += not valid
+            if valid:
                 self.counts["behavior_valid"] += 1
                 self.counts["behavior_correct"] += turn["behavior_correct"]
 
     def report(self, metadata: dict[str, Any]) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "rule_version": RULE_VERSION,
             "source": {
                 **metadata,
@@ -592,6 +637,8 @@ class Aggregator:
             "groups": {
                 k: [{"value": v, **dict(c)} for v, c in rows.items()] for k, rows in self.groups.items()
             },
+            "behavior_groups": [{"value": v, **dict(c)} for v, c in self.behavior_groups.items()],
+            "behavior_scenarios": [{"value": v, **dict(c)} for v, c in self.behavior_scenarios.items()],
             "errors": [
                 {"code": k, "label": LABELS.get(k, k), **dict(v)}
                 for k, v in sorted(self.errors.items(), key=lambda kv: -kv[1]["affected_items"])
@@ -599,8 +646,12 @@ class Aggregator:
             "behavior_matrix": [
                 {"expected": e, "actual": a, "count": n} for (e, a), n in self.matrix.items()
             ],
-            "heatmap": [{"question_type": q, "code": c, "count": n} for (q, c), n in self.heatmap.items()],
+            "heatmap": [{"content_type": q, "code": c, "count": n} for (q, c), n in self.heatmap.items()],
             "definitions": [
+                "原始标签保留在source_labels；内容任务标签出现在考察角度时标为未标注角度，不作同维度比较。",
+                "内容类型仅取明确的内容任务标签；行为测试、预期动作、测试场景不作为内容类型。未标注内容类型不推断。",
+                "0/1/2分表示任务完成质量（含回答、拒答与澄清）；行为符合率独立使用逐轮行为判定，不从质量分推算。",
+                "行为覆盖以全部对话轮为分母（含预期未知）；行为符合率以有效行为判定轮数为分母。案例列表按题去重。",
                 "异常事件数、受影响题数、最终执行失败题数分别统计；错误类别及多标签题型/角度可重叠，不能相加。",
                 "恢复仅根据同轮同一步重试成功或明确恢复事件判定，未知不计成功。",
                 "分数分母为有效Judge题数；行为分母为有效逐轮行为判定数；未知与未覆盖不补零。",
@@ -611,10 +662,27 @@ class Aggregator:
 
 
 def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
-    behavioral = {k: v for k, v in filters.items() if k in {"expected_action", "actual_action"} and v}
+    behavioral = {
+        k: v
+        for k, v in filters.items()
+        if k in {"expected_action", "actual_action", "behavior_result", "test_scenario"} and v
+    }
     if behavioral and not any(
         all(
-            str(turn["expected" if k == "expected_action" else "actual"] or "unknown") == v
+            (
+                (
+                    "correct"
+                    if turn["behavior_correct"] is True
+                    else "incorrect"
+                    if turn["behavior_correct"] is False
+                    else "missing"
+                )
+                == v
+                if k == "behavior_result"
+                else v in turn.get("test_scenarios", [])
+                if k == "test_scenario"
+                else str(turn["expected" if k == "expected_action" else "actual"] or "unknown") == v
+            )
             for k, v in behavioral.items()
         )
         for turn in case["turns"]
@@ -623,7 +691,7 @@ def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
     for k, v in filters.items():
         if v in (None, ""):
             continue
-        if k == "expected_action" or k == "actual_action":
+        if k in {"expected_action", "actual_action", "behavior_result", "test_scenario"}:
             continue
         if k in DIMENSIONS and category_value(k, str(v)) not in {
             category_value(k, value) for value in case["dimension_labels"].get(k, [])
