@@ -641,6 +641,321 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/runs/{run_id}/analysis:
+    post:
+      tags:
+      - error-analysis
+      summary: Create
+      operationId: create_api_v1_runs__run_id__analysis_post
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisRequest'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisJob'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - error-analysis
+      summary: Latest
+      operationId: latest_api_v1_runs__run_id__analysis_get
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisJob'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/runs/{run_id}/analyses:
+    get:
+      tags:
+      - error-analysis
+      summary: History
+      operationId: history_api_v1_runs__run_id__analyses_get
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AnalysisJob'
+                title: Response History Api V1 Runs  Run Id  Analyses Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/analyses/{job_id}:
+    get:
+      tags:
+      - error-analysis
+      summary: Job
+      operationId: job_api_v1_analyses__job_id__get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisJob'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/analyses/{job_id}/cancel:
+    post:
+      tags:
+      - error-analysis
+      summary: Cancel
+      operationId: cancel_api_v1_analyses__job_id__cancel_post
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalysisJob'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/analyses/{job_id}/cases:
+    get:
+      tags:
+      - error-analysis
+      summary: Cases
+      operationId: cases_api_v1_analyses__job_id__cases_get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: page_size
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Page Size
+      - name: code
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Code
+      - name: question_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Question Type
+      - name: expected_action
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Expected Action
+      - name: actual_action
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Actual Action
+      - name: score
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Score
+      - name: recovery
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Recovery
+      - name: execution
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Execution
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CasePage'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/analyses/{job_id}/export:
+    get:
+      tags:
+      - error-analysis
+      summary: Export
+      operationId: export_api_v1_analyses__job_id__export_get
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      - name: format
+        in: query
+        required: false
+        schema:
+          enum:
+          - html
+          - json
+          - csv
+          type: string
+          default: html
+          title: Format
+      - name: code
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Code
+      - name: question_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Question Type
+      - name: expected_action
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Expected Action
+      - name: actual_action
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Actual Action
+      - name: score
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Score
+      - name: recovery
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Recovery
+      - name: execution
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Execution
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/config:
     get:
       tags:
@@ -1011,6 +1326,404 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
+    AnalysisJob:
+      properties:
+        status:
+          type: string
+          title: Status
+        job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Job Id
+        run_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run Id
+        kind:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Kind
+        processed:
+          type: integer
+          title: Processed
+          default: 0
+        stale:
+          type: boolean
+          title: Stale
+          default: false
+        report:
+          anyOf:
+          - $ref: '#/components/schemas/AnalysisReport'
+          - $ref: '#/components/schemas/ComparisonReport'
+          - $ref: '#/components/schemas/DiagnosisReport'
+          - type: 'null'
+          title: Report
+      additionalProperties: true
+      type: object
+      required:
+      - status
+      title: AnalysisJob
+    AnalysisReport:
+      properties:
+        schema_version:
+          type: integer
+          title: Schema Version
+        rule_version:
+          type: integer
+          title: Rule Version
+        generated_at:
+          type: number
+          title: Generated At
+        source:
+          additionalProperties: true
+          type: object
+          title: Source
+        result_fingerprint:
+          type: string
+          title: Result Fingerprint
+        gt_fingerprint:
+          type: string
+          title: Gt Fingerprint
+        item_count:
+          type: integer
+          title: Item Count
+        counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Counts
+        denominators:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Denominators
+        groups:
+          additionalProperties:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+          type: object
+          title: Groups
+        errors:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Errors
+        behavior_matrix:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Behavior Matrix
+        heatmap:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Heatmap
+        definitions:
+          items:
+            type: string
+          type: array
+          title: Definitions
+      additionalProperties: true
+      type: object
+      required:
+      - schema_version
+      - rule_version
+      - generated_at
+      - source
+      - result_fingerprint
+      - gt_fingerprint
+      - item_count
+      - counts
+      - denominators
+      - groups
+      - errors
+      - behavior_matrix
+      - heatmap
+      - definitions
+      title: AnalysisReport
+    AnalysisRequest:
+      properties:
+        kind:
+          type: string
+          enum:
+          - rules
+          - compare
+          - ai
+          title: Kind
+          default: rules
+        parent_job:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Parent Job
+        left_job:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Left Job
+        right_job:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Right Job
+        indices:
+          items:
+            type: integer
+          type: array
+          maxItems: 20
+          title: Indices
+        provider_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider Id
+      type: object
+      title: AnalysisRequest
+    AnomalyEvent:
+      properties:
+        event_id:
+          type: string
+          title: Event Id
+        code:
+          type: string
+          title: Code
+        label:
+          type: string
+          title: Label
+        source:
+          type: string
+          title: Source
+        turn:
+          type: integer
+          title: Turn
+        step_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Step Id
+        recovery:
+          type: string
+          enum:
+          - recovered
+          - not_recovered
+          - unknown
+          title: Recovery
+        basis:
+          type: string
+          title: Basis
+        role:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Role
+        diagnostics:
+          additionalProperties: true
+          type: object
+          title: Diagnostics
+      additionalProperties: true
+      type: object
+      required:
+      - event_id
+      - code
+      - label
+      - source
+      - turn
+      - recovery
+      - basis
+      title: AnomalyEvent
+    CasePage:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/CaseReference'
+          type: array
+          title: Items
+        total:
+          type: integer
+          title: Total
+        page:
+          type: integer
+          title: Page
+        page_size:
+          type: integer
+          title: Page Size
+      type: object
+      required:
+      - items
+      - total
+      - page
+      - page_size
+      title: CasePage
+    CaseReference:
+      properties:
+        index:
+          type: integer
+          title: Index
+        qa_id:
+          type: string
+          title: Qa Id
+        question:
+          type: string
+          title: Question
+        answer:
+          type: string
+          title: Answer
+        reference_answer:
+          type: string
+          title: Reference Answer
+        score:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Score
+        execution:
+          type: string
+          title: Execution
+        dimensions:
+          additionalProperties:
+            type: string
+          type: object
+          title: Dimensions
+        events:
+          items:
+            $ref: '#/components/schemas/AnomalyEvent'
+          type: array
+          title: Events
+        turns:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Turns
+        missing:
+          items:
+            type: string
+          type: array
+          title: Missing
+        signals:
+          items:
+            type: string
+          type: array
+          title: Signals
+      additionalProperties: true
+      type: object
+      required:
+      - index
+      - qa_id
+      - question
+      - answer
+      - reference_answer
+      - score
+      - execution
+      - dimensions
+      - events
+      - turns
+      - missing
+      - signals
+      title: CaseReference
+    ComparisonReport:
+      properties:
+        comparable:
+          type: boolean
+          title: Comparable
+        sources:
+          additionalProperties: true
+          type: object
+          title: Sources
+        differences:
+          items:
+            type: string
+          type: array
+          title: Differences
+        missing_configuration:
+          items:
+            type: string
+          type: array
+          title: Missing Configuration
+        duplicates:
+          items:
+            type: string
+          type: array
+          title: Duplicates
+        pairing_counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Pairing Counts
+        quality_changes:
+          anyOf:
+          - additionalProperties:
+              type: integer
+            type: object
+          - type: 'null'
+          title: Quality Changes
+        rows:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Rows
+        note:
+          type: string
+          title: Note
+      additionalProperties: true
+      type: object
+      required:
+      - comparable
+      - sources
+      - differences
+      - missing_configuration
+      - duplicates
+      - pairing_counts
+      - quality_changes
+      - rows
+      - note
+      title: ComparisonReport
+    DiagnosisReport:
+      properties:
+        parent_job:
+          type: string
+          title: Parent Job
+        model:
+          type: string
+          title: Model
+        provider_id:
+          type: string
+          title: Provider Id
+        requested:
+          type: integer
+          title: Requested
+        covered:
+          type: integer
+          title: Covered
+        cases:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Cases
+        note:
+          type: string
+          title: Note
+      additionalProperties: true
+      type: object
+      required:
+      - parent_job
+      - model
+      - provider_id
+      - requested
+      - covered
+      - cases
+      - note
+      title: DiagnosisReport
     HTTPValidationError:
       properties:
         detail:

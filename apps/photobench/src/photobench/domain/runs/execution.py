@@ -574,6 +574,9 @@ def traces_from_progress(
                     "status": call.get("status", "complete"),
                     "tool_argument_parse_facts": call.get("tool_argument_parse_facts"),
                     "error_type": call.get("error_type"),
+                    "call_id": call.get("call_id"),
+                    "diagnostics": call.get("diagnostics"),
+                    "recovered_by_call_id": call.get("recovered_by_call_id"),
                     "attempt": call.get("attempt"),
                     # ``action`` 是「这一步做了什么」：调了哪个工具，或者就是收口。
                     # ``agent_stability`` 的 ``parsed_success`` 按它判「这一步解析出了动作」。

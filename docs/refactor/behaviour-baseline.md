@@ -970,3 +970,7 @@ Jetson正式采样的核心进程内存读取移入单个spawn子进程，与HTT
 关闭管道后子进程结束当前读取并退出；未退出PID经OwnedTelemetryWork计入stop_pending，不能冒称回收完成。
 仅创建与关闭本轮探测进程，不启停共享模型。探测进程作为产品后代参与PSS归属；使用当前绑定解释器，无新增依赖或部署开关。
 直接单步sample_once保留进程内诊断路径；正式start始终使用受管进程，启动失败明示unavailable，不静默回退。
+
+## 2026-10-24 错误分析扩展
+
+新增独立派生分析环节与UI入口，测评/重判收尾后排队，历史手动触发。原run终态、GT、分数和Agent预算/重试/恢复策略不变。Judge与Agent追加可选错误观测，不影响判分请求或执行分支。分析异常、取消和重启不改原run。规则/接口/后台进程与AI引用边界由`apps/photobench/tests/test_error_analysis.py`验证；前端交互见`features/analysis/ErrorAnalysisPanel.test.tsx`。完整契约见`docs/architecture/photobench-error-analysis.md`。

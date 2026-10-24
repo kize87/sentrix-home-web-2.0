@@ -110,7 +110,9 @@ class RunSuites:
         budget_defaults: Mapping[str, Any] | None = None,
         inline_images: InlineImages | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        on_finished: Callable[[str], None] | None = None,
     ) -> None:
+        self._on_finished = on_finished
         self._build_revision = build_revision
         self._budget_defaults = dict(budget_defaults or {})
         self._store = store
@@ -187,6 +189,8 @@ class RunSuites:
                     if not self._stop_pending(finished):
                         self._active.pop(run_id, None)
                         self._threads.pop(run_id, None)
+            if self._on_finished is not None and not self._stop_pending(finished):
+                self._on_finished(run_id)
 
     def _require_inactive(self) -> None:
         busy = self._active_ids()
@@ -611,6 +615,8 @@ class RunSuites:
                     with self._lock:
                         self._active.pop(key, None)
                         self._threads.pop(key, None)
+                    if self._on_finished is not None:
+                        self._on_finished(key)
             except Exception as error:
                 errors[key] = str(error)
         with self._lock:
@@ -1011,6 +1017,8 @@ class RunSuites:
             finally:
                 with self._lock:
                     self._auxiliary.pop(rejudge_id, None)
+                if self._on_finished is not None:
+                    self._on_finished(run_id)
 
         thread = threading.Thread(target=rejudge_worker, name=rejudge_id, daemon=True)
         with self._lock:

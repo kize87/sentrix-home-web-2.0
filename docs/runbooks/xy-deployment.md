@@ -246,3 +246,10 @@ Jetson正式采样的核心进程内存读取移入单个spawn子进程，与HTT
 关闭管道后子进程结束当前读取并退出；未退出PID经OwnedTelemetryWork计入stop_pending，不能冒称回收完成。
 仅创建与关闭本轮探测进程，不启停共享模型。探测进程作为产品后代参与PSS归属；使用当前绑定解释器，无新增依赖或部署开关。
 直接单步sample_once保留进程内诊断路径；正式start始终使用受管进程，启动失败明示unavailable，不静默回退。
+
+
+### 2026-10-24 错误分析发布与验证
+
+运行详情展开“错误分析”；历史结果点击生成规则报告。新测评和重判退出后自动排队，分析失败不改run结果。active-work包括分析任务；取消后等工作退出再更新服务。历史报告、来源指纹和过期标记保留，重评分后重新生成。AI默认关闭，需选择1–20题并确认provider；不将secret写入任务记录。
+
+固定版本执行完整`make ci`，以干净提交打包。四机同一证据目录用各自绑定Python运行`PYTHONPATH=<release>/apps/photobench/src <python> <release>/scripts/replay_photobench_error_analysis.py --root <evidence> --output <replay.json>`，核对fact_signature、raw_unchanged及AGX格式异常/153恢复断言；回放不调用模型。随后仅在资源允许的设备激活8291/8872，真实QA验证新调用diagnostics、工具内部模型事实、Judge事实及自动分析。NX资源不足须保留待验，不抢共享模型。HTML离线导出、页面筛选和原轨迹定位分别验收。

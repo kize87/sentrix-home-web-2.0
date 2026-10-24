@@ -30,6 +30,7 @@ import { EXECUTION_PHASES } from "../../lib/constants.ts";
 import { albumName, duration, fmtDate, modelName, qaName, statusLabel } from "../../lib/format.ts";
 import { MemoryLayerPanel } from "../memory/MemoryLayerPanel.tsx";
 import type { MemoryLayerPanelProps } from "../memory/MemoryLayerPanel.tsx";
+import { ErrorAnalysisPanel } from "../analysis/ErrorAnalysisPanel.tsx";
 import { KeyMetrics } from "./KeyMetrics.tsx";
 import { PhaseList } from "./PhaseList.tsx";
 import { RejudgeCard } from "./RejudgeCard.tsx";
@@ -151,6 +152,7 @@ export function RunDetail({
           {activeRun.mode !== "build" ? <RejudgeCard {...rejudge} /> : null}
           <PhaseList activeRun={activeRun} />
           <KeyMetrics run={activeRun} />
+          <ErrorAnalysisPanel key={`analysis-${activeRun.run_id}`} runId={activeRun.run_id} terminal={["completed", "completed_with_errors", "failed", "cancelled", "interrupted"].includes(activeRun.status || "")} />
           {memory ? <MemoryLayerPanel key={activeRun.run_id} {...memory} /> : null}
           <h3 className="result-heading">结果指标</h3>
           {activeRun.history_mode === "checkpoint" ? (

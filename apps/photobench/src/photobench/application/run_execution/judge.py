@@ -28,6 +28,7 @@ import os
 import random
 import threading
 import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -185,10 +186,22 @@ class JudgeRunner:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.judge_api_key}"} if self.judge_api_key else {}
 
-    def _request(self, payload: dict[str, Any], timeout: int = 180) -> tuple[dict[str, Any], int]:
+    def _request(
+        self,
+        payload: dict[str, Any],
+        timeout: int = 180,
+        observations: list[dict[str, Any]] | None = None,
+    ) -> tuple[dict[str, Any], int]:
         """1.0 ``_judge_request``（``:4433``）：带退避的重试；4xx 立刻抛。"""
         last_error: Exception | None = None
         for attempt in range(1, JUDGE_RETRY_ATTEMPTS + 1):
+            record: dict[str, Any] = {
+                "call_id": uuid.uuid4().hex,
+                "role": "judge",
+                "attempt": attempt,
+                "status": "error",
+            }
+            started = time.perf_counter()
             try:
                 self._wait_for_request_slot()
                 response = self.http.request_json(
@@ -196,10 +209,26 @@ class JudgeRunner:
                 )
                 if not isinstance(response, dict):
                     raise ValueError("judge response is not an object")
+                record.update(status="complete", diagnostics={"request_sent": True})
+                if observations is not None:
+                    for previous in observations:
+                        if previous.get("status") == "error" and not previous.get("recovered_by_call_id"):
+                            previous["recovered_by_call_id"] = record["call_id"]
                 return response, attempt
             except Exception as exc:  # noqa: BLE001 —— 1.0 在这里把一切收成「重试或放弃」
                 last_error = exc
                 client_code = self._client_error_code(exc)
+                record.update(
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    diagnostics={
+                        "request_sent": None,
+                        "http_status": client_code,
+                        "error_category": "request_timeout"
+                        if any(w in str(exc).lower() for w in ("timeout", "timed out", "超时"))
+                        else "service_error",
+                    },
+                )
                 if client_code is not None:
                     raise RuntimeError(
                         f"judge request rejected with HTTP {client_code} (client error, not retryable): {exc}"
@@ -208,6 +237,10 @@ class JudgeRunner:
                     break
                 if self._wait(self._retry_delay(exc, attempt)):
                     raise RunCancelledError("cancelled while retrying Judge request") from exc
+            finally:
+                record["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
+                if observations is not None:
+                    observations.append(record)
         raise RuntimeError(
             f"judge request failed after {JUDGE_RETRY_ATTEMPTS} attempts: {last_error}"
         ) from last_error
@@ -272,14 +305,26 @@ class JudgeRunner:
         text = ""
         normalization = normalize_judge_score(None)
         retry_attempts = 0
+        observations: list[dict[str, Any]] = []
         try:
             score: int | None = None
             reason = ""
             for consistency_attempt in range(2):
-                raw, request_attempts = self._request(payload)
+                raw, request_attempts = self._request(payload, observations=observations)
                 retry_attempts += request_attempts
                 text = str(raw.get("choices", [{}])[0].get("message", {}).get("content") or "")
                 parsed = parse_judge_json(text)
+                if not parsed:
+                    observations.append(
+                        {
+                            "call_id": uuid.uuid4().hex,
+                            "status": "error",
+                            "role": "judge",
+                            "diagnostics": {"error_category": "judge_json_invalid", "request_sent": True},
+                            "error": "Judge output could not be parsed",
+                            "error_type": "JudgeParseError",
+                        }
+                    )
                 normalization = normalize_judge_score(parsed.get("score"))
                 score = normalization["score"]
                 reason = str(parsed.get("reason") or text[:200])
@@ -314,6 +359,7 @@ class JudgeRunner:
                     ],
                 }
             return {
+                "call_observations": observations,
                 "score": score,
                 "score_normalization_version": JUDGE_SCORE_NORMALIZATION_VERSION,
                 "score_normalization": normalization,
@@ -328,6 +374,7 @@ class JudgeRunner:
         except Exception as exc:  # noqa: BLE001 — preserve received observations even if retry fails
             attempts.append({"input": payload, "error": str(exc)})
             return {
+                "call_observations": observations,
                 "score": None,
                 "score_normalization_version": JUDGE_SCORE_NORMALIZATION_VERSION,
                 "score_normalization": normalization,
@@ -385,16 +432,29 @@ class JudgeRunner:
                 {"role": "user", "content": prompt},
             ],
         }
+        observations: list[dict[str, Any]] = []
         try:
-            raw, _ = self._request(payload)
+            raw, _ = self._request(payload, observations=observations)
             text = str(raw.get("choices", [{}])[0].get("message", {}).get("content") or "")
             parsed = parse_judge_json(text)
+            if not parsed:
+                observations.append(
+                    {
+                        "call_id": uuid.uuid4().hex,
+                        "status": "error",
+                        "role": "judge",
+                        "diagnostics": {"error_category": "judge_json_invalid", "request_sent": True},
+                        "error": "Judge output could not be parsed",
+                        "error_type": "JudgeParseError",
+                    }
+                )
             actual = (
                 parsed.get("actual_action")
                 if parsed.get("actual_action") in {"answer", "refuse", "clarify", "none"}
                 else None
             )
             return {
+                "call_observations": observations,
                 "expected_action": expected_action,
                 "actual_action": actual,
                 "correct": actual == expected_action if actual else None,
@@ -406,6 +466,7 @@ class JudgeRunner:
             }
         except Exception as exc:  # noqa: BLE001 —— 1.0 ``:4368``
             return {
+                "call_observations": observations,
                 "expected_action": expected_action,
                 "actual_action": None,
                 "correct": None,
@@ -464,13 +525,26 @@ class JudgeRunner:
                 {"role": "user", "content": content},
             ],
         }
+        observations: list[dict[str, Any]] = []
         try:
-            raw, _ = self._request(payload)
+            raw, _ = self._request(payload, observations=observations)
             text = str(raw.get("choices", [{}])[0].get("message", {}).get("content") or "")
             parsed = parse_judge_json(text)
+            if not parsed:
+                observations.append(
+                    {
+                        "call_id": uuid.uuid4().hex,
+                        "status": "error",
+                        "role": "judge",
+                        "diagnostics": {"error_category": "judge_json_invalid", "request_sent": True},
+                        "error": "Judge output could not be parsed",
+                        "error_type": "JudgeParseError",
+                    }
+                )
             applicable = parsed.get("applicable") is not False
             if not applicable:
                 return {
+                    "call_observations": observations,
                     "score": None,
                     "applicable": False,
                     "score_normalization_version": JUDGE_SCORE_NORMALIZATION_VERSION,
@@ -483,6 +557,7 @@ class JudgeRunner:
             normalization = normalize_judge_score(parsed.get("score"))
             score = normalization["score"]
             return {
+                "call_observations": observations,
                 "score": score,
                 "applicable": True,
                 "score_normalization_version": JUDGE_SCORE_NORMALIZATION_VERSION,
@@ -502,6 +577,7 @@ class JudgeRunner:
             }
         except Exception as exc:  # noqa: BLE001 —— 1.0 ``:4414``
             return {
+                "call_observations": observations,
                 "score": None,
                 "reason": f"judge_error: {exc}",
                 "input": payload,

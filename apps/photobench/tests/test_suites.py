@@ -840,3 +840,20 @@ def test_memory_wait_failure_retains_product_cleanup_ownership(failure):
     assert event.is_set()
     assert cleanup["cancelled_operations"][0]["cleanup_status"] == "pending"
     assert "wait_error" in cleanup["cancelled_operations"][0]
+
+
+def test_automatic_analysis_is_enqueued_only_after_execution_released(tmp_path: Path):
+    seen = []
+    service = _suites(tmp_path)
+
+    def finished(run_id):
+        assert not service._active
+        assert run_id not in service._threads
+        seen.append(run_id)
+
+    service._on_finished = finished
+    response = service.start_suite(_payload())
+    deadline = time.monotonic() + 2
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert seen == response["run_ids"]

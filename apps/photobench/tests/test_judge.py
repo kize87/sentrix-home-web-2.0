@@ -445,3 +445,14 @@ def test_reference_answer_praise_does_not_describe_the_tested_models_answer():
     result = _runner(http).judge("q", "r", "a")
     assert result["score"] == 0
     assert len(http.calls) == 1
+
+
+def test_request_observations_keep_retry_ids_and_recovered_error():
+    http = FakeHttpClient([TimeoutError("timed out"), judge_reply('{"score":2,"reason":"正确"}')])
+    result = _runner(http).judge("Q", "A", "A")
+    observations = result["call_observations"]
+    assert len(observations) == 2
+    assert observations[0]["diagnostics"]["error_category"] == "request_timeout"
+    assert observations[0]["recovered_by_call_id"] == observations[1]["call_id"]
+    assert observations[0]["call_id"] != observations[1]["call_id"]
+    assert result["score"] == 2

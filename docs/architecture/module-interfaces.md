@@ -1254,3 +1254,7 @@ Judge一致性v3进一步限定为明确“模型/助手的回答/答案/结论�
 ### T006 2026-10-24 终态汇总修复
 
 八种运行总状态和端口/schema保持不变；QA/Judge最终失败及缺分统一由domain.runs.execution.qa_completion_errors判断，application负责取消优先、池回收与done/partial/failed发布；详情见[运行终态汇总规则](photobench-metrics-contract.md#t006-2026-10-24-运行终态汇总规则)。不将历史attempt错误当最终失败，不重写历史run，不影响产品层。
+
+## PhotoBench 错误分析（2026-10-24）
+
+`AnalysisBackend`为独立派生任务端口，`ErrorAnalysis`编排，bootstrap装配。分析不改变测评状态/评分/GT，单spawn进程并发1、测评优先，纳入取消/退出确认与重启恢复。API、事件/案例/报告类型、分母与来源契约见[错误分析设计](photobench-error-analysis.md)。Agent的`ModelReply`和`ModelServiceError`追加可选diagnostics，调用投影追加唯一ID及恢复关联，不更改现有执行策略。

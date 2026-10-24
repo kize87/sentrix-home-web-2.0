@@ -115,6 +115,7 @@ class GoalPlanner:
                     prompt_tokens=reply.prompt_tokens,
                     completion_tokens=reply.completion_tokens,
                     finish_reason=reply.finish_reason,
+                    diagnostics=dict(reply.diagnostics),
                 )
             except OperationCancelled:
                 raise
@@ -123,7 +124,11 @@ class GoalPlanner:
                 # 只有模型服务这一侧的失败才带说明：它的文案里已经写明了端点地址，直接
                 # 转述比在上层另拼一句更准。别的原因（2.0 自己拼错了请求）不往里塞，
                 # 免得把内部形状说给用户听。
-                call.update(error_type=type(error).__name__, error=str(error))
+                call.update(
+                    error_type=type(error).__name__,
+                    error=str(error),
+                    diagnostics=dict(getattr(error, "diagnostics", {})),
+                )
                 detail = str(error) if isinstance(error, ModelServiceError) else ""
                 return PlannerResult(
                     fallback_reason=PLANNER_CALL_ERROR, detail=detail, model_calls=tuple([*calls, call])
@@ -136,6 +141,7 @@ class GoalPlanner:
             requirements, reason = parse_declaration(last_raw or "", scope_id=scope_id, question=question)
             if requirements is not None:
                 return PlannerResult(requirements=requirements, raw=last_raw, model_calls=tuple(calls))
+            call["output_format_error"] = reason
             last_reason = reason
             if attempt + 1 >= self.max_attempts:
                 break

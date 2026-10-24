@@ -274,7 +274,24 @@ def _turn_trace(session: _Session, planned: PlannerResult | None) -> Mapping[str
     ledger = session.ledger
     requirements = [dict(item) for item in ledger.as_payload()]
     calls = [dict(call) for call in [*(planned.model_calls if planned else ()), *session.model_calls]]
-    for call in calls:
+    for position, call in enumerate(calls):
+        call.setdefault("call_id", f"{state.turn_id}:{call.get('call_type', 'unknown')}:{position}")
+        call.setdefault("turn_id", state.turn_id)
+        following = next(
+            (
+                c
+                for c in calls[position + 1 :]
+                if c.get("step_id") == call.get("step_id")
+                and c.get("call_type") == call.get("call_type")
+                and c.get("status") == "complete"
+            ),
+            None,
+        )
+        if call.get("status") == "error" and following is not None:
+            call["recovered_by_call_id"] = (
+                following.get("call_id")
+                or f"{state.turn_id}:{following.get('call_type', 'unknown')}:{calls.index(following)}"
+            )
         call.setdefault(
             "call_observation",
             {
@@ -759,6 +776,8 @@ class RunTurn:
             "step_id": _step_id(session.state),
             "call_type": call_type,
             "attempt": len(session.model_calls) + 1,
+            "call_id": f"{session.state.turn_id}:agent:{len(session.model_calls) + 1}",
+            "turn_id": session.state.turn_id,
             "status": "error",
         }
         try:
@@ -779,10 +798,15 @@ class RunTurn:
                 finish_reason=reply.finish_reason,
                 tool_calls=[call.name for call in reply.tool_calls],
                 tool_argument_parse_facts=facts,
+                diagnostics=dict(reply.diagnostics),
             )
             return reply
         except Exception as error:
-            record.update(error_type=type(error).__name__, error=str(error))
+            record.update(
+                error_type=type(error).__name__,
+                error=str(error),
+                diagnostics=dict(getattr(error, "diagnostics", {})),
+            )
             raise
         finally:
             record["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
@@ -1441,7 +1465,14 @@ class RunTurn:
             # 工具明确说「这类证据本轮拿不到」——账本封口，门禁不再逼模型重试一个查不到
             # 的东西。这是「无证据时输出 gap 不编造」在工具层的落点。
             session.ledger.block(outcome.blocks, reason=outcome.failure_reason)
-            self._tool_event(session, call, ProgressStatus.PARTIAL, outcome.failure_reason, "tool_error")
+            self._tool_event(
+                session,
+                call,
+                ProgressStatus.PARTIAL,
+                outcome.failure_reason,
+                "tool_error",
+                extra={"duration_ms": duration_ms, "result": _tool_result_shape(outcome)},
+            )
         else:
             self._tool_event(
                 session,
@@ -1449,7 +1480,7 @@ class RunTurn:
                 ProgressStatus.DENIED,
                 outcome.failure_reason,
                 "tool_error",
-                extra={"duration_ms": duration_ms},
+                extra={"duration_ms": duration_ms, "result": _tool_result_shape(outcome)},
             )
 
         return (
