@@ -14,6 +14,7 @@ export function AnalysisChart({
 }) {
   const element = useRef<HTMLDivElement>(null);
   const instance = useRef<ReturnType<typeof echarts.init> | null>(null);
+  const renderedOption = useRef<string | null>(null);
   const clickHandler = useRef(onClick);
   useEffect(() => {
     clickHandler.current = onClick;
@@ -31,10 +32,16 @@ export function AnalysisChart({
       observer.disconnect();
       chart.dispose();
       instance.current = null;
+      renderedOption.current = null;
     };
   }, []);
   useEffect(() => {
-    instance.current?.setOption(option);
+    // Polling returns fresh objects for the same saved report. Heatmap renders
+    // recreate labels, so submitting identical options restarts their fade-in.
+    const nextOption = JSON.stringify(option);
+    if (!instance.current || renderedOption.current === nextOption) return;
+    instance.current.setOption({ ...option, animation: false });
+    renderedOption.current = nextOption;
   }, [option]);
   return (
     <div
