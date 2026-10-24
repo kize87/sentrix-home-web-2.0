@@ -23,6 +23,10 @@ export interface AnalysisTurn {
   behavior_correct: boolean | null;
   judge_reason: string;
   score: number | null;
+  content_type?: string[];
+  content_subtype?: string[];
+  difficulty?: string[];
+  answerability?: string[];
 }
 export interface AnalysisCase {
   index: number;
@@ -50,6 +54,7 @@ export interface AnalysisReport {
   source: Record<string, unknown>;
   result_fingerprint: string;
   gt_fingerprint: string;
+  annotation_fingerprint?: string;
   counts: Record<string, number>;
   denominators: Record<string, number>;
   errors: {

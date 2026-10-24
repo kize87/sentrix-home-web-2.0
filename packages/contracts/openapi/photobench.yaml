@@ -1602,6 +1602,19 @@ components:
         gt_fingerprint:
           type: string
           title: Gt Fingerprint
+        annotation_fingerprint:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Annotation Fingerprint
+        turn_groups:
+          additionalProperties:
+            items:
+              additionalProperties: true
+              type: object
+            type: array
+          type: object
+          title: Turn Groups
         item_count:
           type: integer
           title: Item Count

@@ -805,7 +805,7 @@ class RunSuites:
                     ):
                         raise InvalidRequestError("原测评QA快照缺少对应题目或对话轮定义")
                 elif turn_index is not None and len(item["runtime_turns"]) > 1:
-                    if "reference_answer" not in item["runtime_turns"][turn_index]:
+                    if not str(item["runtime_turns"][turn_index].get("reference_answer") or "").strip():
                         raise InvalidRequestError("原测评未记录逐轮参考答案，不能重评分")
             rejudge_id = f"rejudge-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
             previous = state.get("rejudge")
@@ -872,7 +872,11 @@ class RunSuites:
             if turn_index is not None:
                 gt = definition_turns[turn_index] if definition_turns else definition if snapshot else record
                 if not snapshot and len(turns) == 1:
-                    gt = {**item, **record}
+                    gt = {
+                        **item,
+                        **record,
+                        "reference_answer": record.get("reference_answer") or item["reference_answer"],
+                    }
             else:
                 gt = definition
             expected = gt.get("expected_action")

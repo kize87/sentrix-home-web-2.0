@@ -242,3 +242,24 @@ def test_legacy_rejudge_requires_and_uses_saved_turn_references(tmp_path, monkey
     suites.start_rejudge("run-1", {"system_prompt": "test"})
     assert _wait_until(lambda: state["rejudge"]["status"] == "completed")
     assert sorted(seen) == ["saved one", "saved two"]
+
+
+def test_legacy_single_turn_rejudge_keeps_saved_item_reference(tmp_path, monkeypatch):
+    from test_suites import _judged_state, _wait_until
+
+    from photobench.application.run_execution.judge import JudgeRunner
+
+    state = _judged_state()
+    state["items"][0]["runtime_turns"][0]["reference_answer"] = ""
+    seen = []
+
+    def judge(_self, _message, reference, _answer, **_kwargs):
+        seen.append(reference)
+        return {"score": 1}
+
+    monkeypatch.setattr(JudgeRunner, "judge", judge)
+    monkeypatch.setattr(JudgeRunner, "judge_task_action", lambda *_a, **_k: {})
+    suites = _suites(tmp_path, store=FakeRunStore({"run-1": state}))
+    suites.start_rejudge("run-1", {"system_prompt": "test"})
+    assert _wait_until(lambda: state["rejudge"]["status"] == "completed")
+    assert seen == ["a.jpg"]

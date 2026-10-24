@@ -76,6 +76,8 @@ class AnalysisReport(BaseModel):
     source: dict[str, Any]
     result_fingerprint: str
     gt_fingerprint: str
+    annotation_fingerprint: str | None = None
+    turn_groups: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     item_count: int
     counts: dict[str, int]
     denominators: dict[str, int]
