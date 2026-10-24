@@ -43,6 +43,13 @@ def item(**extra: Any) -> dict[str, Any]:
     }
 
 
+def test_legacy_judge_and_internal_call_recording_gaps_are_explicit():
+    case = case_from_item(item(tool_trace=[{"tool": "inspect_photo", "result": {}}]), 0)
+    assert "judge_call_records" in case["missing"]
+    assert "tool_model_call_records" in case["missing"]
+    assert case["tool_model_calls"] == case["judge_calls"] == 0
+
+
 def report(cases: list[dict[str, Any]], **source: Any) -> dict[str, Any]:
     a = Aggregator()
     for c in cases:

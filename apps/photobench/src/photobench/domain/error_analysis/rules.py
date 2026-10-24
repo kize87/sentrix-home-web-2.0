@@ -395,6 +395,19 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         missing.append("question_type")
     if any(t["expected"] is None or t["actual"] is None for t in turn_rows):
         missing.append("behavior")
+    judge_records = turns if len(turns) > 1 else [item]
+    if any(
+        t.get(key) and "call_observations" not in t[key]
+        for t in judge_records
+        for key in ("judge", "task_judge", "evidence_judge")
+    ):
+        missing.append("judge_call_records")
+    if any(
+        (t.get("tool") or t.get("name")) == "inspect_photo"
+        and "model_call_observations" not in (t.get("result") or {})
+        for t in tools
+    ):
+        missing.append("tool_model_call_records")
     agent_limits = []
     for record in turns:
         budget = (record.get("trace_bundle") or {}).get("budget") or {}
@@ -587,6 +600,7 @@ class Aggregator:
                 "恢复仅根据同轮同一步重试成功或明确恢复事件判定，未知不计成功。",
                 "分数分母为有效Judge题数；行为分母为有效逐轮行为判定数；未知与未覆盖不补零。",
                 "检索/交付信号用于定位，不作确定因果结论。",
+                "调用分母统计已保存的调用记录；历史未采集的内部调用数量保持未知，见数据缺口。",
             ],
         }
 
