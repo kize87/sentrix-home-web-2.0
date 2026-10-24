@@ -10,7 +10,7 @@ from typing import Any
 
 from photobench.domain.runs.analysis import judge_score_for_summary
 
-RULE_VERSION = 1
+RULE_VERSION = 2
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -397,7 +397,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         missing.append("behavior")
     judge_records = turns if len(turns) > 1 else [item]
     if any(
-        t.get(key) and "call_observations" not in t[key]
+        t.get(key) and t[key].get("reason") != "not_applicable" and "call_observations" not in t[key]
         for t in judge_records
         for key in ("judge", "task_judge", "evidence_judge")
     ):

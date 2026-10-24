@@ -50,6 +50,27 @@ def test_legacy_judge_and_internal_call_recording_gaps_are_explicit():
     assert case["tool_model_calls"] == case["judge_calls"] == 0
 
 
+@pytest.mark.parametrize("multi_turn", [False, True])
+def test_disabled_evidence_judge_is_not_a_missing_call(multi_turn: bool):
+    def turn():
+        return {
+            "judge": {"score": 1, "call_observations": [{"call_id": "quality"}]},
+            "task_judge": {"actual_action": "answer", "call_observations": [{"call_id": "behavior"}]},
+            "evidence_judge": {"score": None, "reason": "not_applicable"},
+        }
+
+    data = item(**turn())
+    if multi_turn:
+        data["runtime_turns"] = [turn(), turn()]
+    case = case_from_item(data, 0)
+    assert "judge_call_records" not in case["missing"]
+    assert case["judge_calls"] == (4 if multi_turn else 2)
+    # A genuinely attempted legacy judge with no observations must still be flagged.
+    target = data["runtime_turns"][0] if multi_turn else data
+    target["evidence_judge"] = {"score": None, "reason": "request_timeout"}
+    assert "judge_call_records" in case_from_item(data, 0)["missing"]
+
+
 def report(cases: list[dict[str, Any]], **source: Any) -> dict[str, Any]:
     a = Aggregator()
     for c in cases:
