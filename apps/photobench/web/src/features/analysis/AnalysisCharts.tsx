@@ -211,12 +211,12 @@ export function AnalysisCharts({ report: r, filter }: {
     </details>
     <article className="analysis-behavior">
       <h4>回答行为</h4>
-      <p>只判断回答、澄清、拒答是否符合预期；内容是否正确见质量分。按对话轮统计，点击后查看所属题目。</p>
+      <p>只判断回答、澄清、拒答是否符合预期；内容是否正确见质量分。按轮统计，案例按题去重。</p>
       <div className="analysis-behavior-bar" aria-label="预期行为占比" style={{display: "flex", height: 34, margin: "16px 0"}}>
         {(r.behavior_groups || []).filter(row => row.total > 0).map(row => <button key={row.value} className="btn compact"
-          style={{width: `${row.total / r.denominators.turns * 100}%`, minWidth: 0, overflow: "hidden", borderRadius: 0, color: "white", background: ({answer: "#426f95", clarify: "#a97a35", refuse: "#47816a", unknown: "#929baa"} as Record<string, string>)[row.value]}}
+          style={{width: `${row.total / r.denominators.turns * 100}%`, minWidth: 0, padding: 0, whiteSpace: "nowrap", overflow: "hidden", borderRadius: 0, color: "white", background: ({answer: "#426f95", clarify: "#a97a35", refuse: "#47816a", unknown: "#929baa"} as Record<string, string>)[row.value]}}
           title={`${displayLabel(row.value)} ${row.total}轮 · ${percent(row.total, r.denominators.turns)}`}
-          onClick={() => selectGroup({expected_action: row.value, score: ""})}>{displayLabel(row.value)} {percent(row.total, r.denominators.turns)}</button>)}
+          onClick={() => selectGroup({expected_action: row.value, score: ""})}>{row.total / r.denominators.turns >= 0.07 ? `${displayLabel(row.value)} ${percent(row.total, r.denominators.turns)}` : ""}</button>)}
       </div>
       <table>
         <caption>预期行为分布 · 共{r.denominators.turns}轮</caption>
