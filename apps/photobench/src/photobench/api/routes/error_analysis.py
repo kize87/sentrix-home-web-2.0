@@ -127,6 +127,13 @@ def filters(
     score: str = "",
     recovery: str = "",
     execution: str = "",
+    task_type: str = "",
+    angle: str = "",
+    difficulty: str = "",
+    answerability: str = "",
+    media_type: str = "",
+    conversation_type: str = "",
+    anomaly: Literal["", "yes", "no"] = "",
 ) -> dict[str, Any]:
     return {
         "code": code,
@@ -136,6 +143,13 @@ def filters(
         "score": score,
         "recovery": recovery,
         "execution": execution,
+        "task_type": task_type,
+        "angle": angle,
+        "difficulty": difficulty,
+        "answerability": answerability,
+        "media_type": media_type,
+        "conversation_type": conversation_type,
+        "anomaly": anomaly,
     }
 
 
@@ -179,10 +193,32 @@ def cases(
     score: str = "",
     recovery: str = "",
     execution: str = "",
+    task_type: str = "",
+    angle: str = "",
+    difficulty: str = "",
+    answerability: str = "",
+    media_type: str = "",
+    conversation_type: str = "",
+    anomaly: Literal["", "yes", "no"] = "",
 ) -> dict[str, Any]:
     return get_container(request).analysis_backend.cases(
         job_id,
-        filters(code, question_type, expected_action, actual_action, score, recovery, execution),
+        filters(
+            code,
+            question_type,
+            expected_action,
+            actual_action,
+            score,
+            recovery,
+            execution,
+            task_type,
+            angle,
+            difficulty,
+            answerability,
+            media_type,
+            conversation_type,
+            anomaly,
+        ),
         page,
         page_size,
     )
@@ -200,11 +236,33 @@ def export(
     score: str = "",
     recovery: str = "",
     execution: str = "",
+    task_type: str = "",
+    angle: str = "",
+    difficulty: str = "",
+    answerability: str = "",
+    media_type: str = "",
+    conversation_type: str = "",
+    anomaly: Literal["", "yes", "no"] = "",
 ) -> Response:
     body = get_container(request).analysis_backend.export(
         job_id,
         format,
-        filters(code, question_type, expected_action, actual_action, score, recovery, execution),
+        filters(
+            code,
+            question_type,
+            expected_action,
+            actual_action,
+            score,
+            recovery,
+            execution,
+            task_type,
+            angle,
+            difficulty,
+            answerability,
+            media_type,
+            conversation_type,
+            anomaly,
+        ),
     )
     media = {"html": "text/html", "json": "application/json", "csv": "text/csv"}[format]
     return Response(

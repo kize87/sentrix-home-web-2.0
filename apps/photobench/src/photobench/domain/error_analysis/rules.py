@@ -626,7 +626,13 @@ def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
             return False
         if k == "execution" and case.get(k) != v:
             return False
-        if k == "score" and str(case.get(k)) != str(v):
+        if k == "score":
+            if v == "low":
+                if case.get("score") not in (0, 1):
+                    return False
+            elif str(case.get(k)) != str(v):
+                return False
+        if k == "anomaly" and bool(case["events"]) != (v == "yes"):
             return False
         if k == "recovery" and not any(e["recovery"] == v for e in case["events"]):
             return False

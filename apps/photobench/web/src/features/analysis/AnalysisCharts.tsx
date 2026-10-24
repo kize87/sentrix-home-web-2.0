@@ -1,16 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { EChartsOption } from "echarts";
+import { dimensions, displayLabel, percent, scores } from "./presentation.ts";
 import type { AnalysisFilters, AnalysisReport } from "../../api/analysis.ts";
 
 export function AnalysisChart({
   option,
   onClick,
   label,
+  height,
 }: {
   option: EChartsOption;
   onClick?: (name: string, value: unknown) => void;
   label: string;
+  height?: number;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const instance = useRef<ReturnType<typeof echarts.init> | null>(null);
@@ -49,209 +52,140 @@ export function AnalysisChart({
       aria-label={label}
       ref={element}
       className="analysis-chart"
+      style={height ? { height } : undefined}
     />
   );
 }
 
-const colors = ["#cf6159", "#d2a352", "#408f83", "#96a1b3"];
-export function AnalysisCharts({
-  report: r,
-  filter,
-}: {
+export function AnalysisCharts({ report: r, filter }: {
   report: AnalysisReport;
   filter: (value: AnalysisFilters) => void;
 }) {
+  const [dimension, setDimension] = useState("task_type");
+  const [ratio, setRatio] = useState(false);
+  const rows = r.groups[dimension] || [];
   const errors = r.errors;
   const types = r.groups.question_type || [];
-  const qs = types.map((x) => x.value);
-  const es = errors.map((x) => x.code);
+  const qs = types.map(x => x.value);
+  const es = errors.map(x => x.code);
   const actions = ["answer", "refuse", "clarify", "none", "unknown"];
+  const selectGroup = (value: AnalysisFilters) => filter({
+    ...Object.fromEntries(Object.keys(dimensions).map(key => [key, ""])),
+    code: "", anomaly: "", recovery: "", execution: "", expected_action: "", actual_action: "",
+    ...value,
+  });
   const quality: EChartsOption = {
-    color: colors,
+    tooltip: { trigger: "axis" },
+    grid: { containLabel: true, top: 15, left: 10, right: 45, bottom: 20 },
+    xAxis: { type: "value", minInterval: 1, name: "题" },
+    yAxis: { type: "category", inverse: true, data: scores.map(x => x.label) },
+    series: [{ type: "bar", label: { show: true, position: "right" },
+      data: scores.map(x => ({ name: x.value, value: r.counts[`score_${x.value}`] || 0, itemStyle: { color: x.color } })) }],
+  };
+  const distribution: EChartsOption = {
+    color: scores.map(x => x.color),
     tooltip: { trigger: "axis" },
     legend: { top: 0, type: "scroll" },
-    grid: { containLabel: true, top: 55, bottom: 30 },
-    xAxis: { type: "category", data: ["题级", "对话轮级"] },
-    yAxis: { type: "value", minInterval: 1 },
-    series: ["0", "1", "2", "None"].map((score) => ({
-      name: score === "None" ? "缺分" : `${score}分`,
-      type: "bar",
-      stack: "scores",
-      data: [
-        r.counts[`score_${score}`] || 0,
-        r.counts[`turn_score_${score}`] || 0,
-      ],
+    grid: { containLabel: true, top: 55, left: 10, right: 45, bottom: 25 },
+    xAxis: { type: "value", minInterval: ratio ? undefined : 1, max: ratio ? 100 : undefined,
+      axisLabel: { formatter: ratio ? "{value}%" : "{value}" } },
+    yAxis: { type: "category", inverse: true, data: rows.map(x => displayLabel(x.value)) },
+    series: scores.map(s => ({
+      name: s.label, type: "bar", stack: "scores", label: { show: true, formatter: "{c}" },
+      data: rows.map(x => ({ name: JSON.stringify([x.value, s.value]),
+        value: ratio ? Number((Number(x[`score_${s.value}`] || 0) / Math.max(1, x.total) * 100).toFixed(1)) : Number(x[`score_${s.value}`] || 0) })),
     })),
   };
   const errorOption: EChartsOption = {
-    tooltip: { trigger: "axis" },
-    legend: { top: 0, type: "scroll" },
-    grid: { containLabel: true, top: 60, left: 10, bottom: 30 },
+    tooltip: { trigger: "axis" }, legend: { top: 0, type: "scroll" },
+    grid: { containLabel: true, top: 60, left: 10, right: 35, bottom: 25 },
     xAxis: { type: "value", minInterval: 1 },
-    yAxis: {
-      type: "category",
-      inverse: true,
-      data: errors.map((x) => x.label),
-    },
+    yAxis: { type: "category", inverse: true, data: errors.map(x => x.label) },
     series: [
-      {
-        name: "受影响题数",
-        type: "bar",
-        data: errors.map((x) => x.affected_items),
-        itemStyle: { color: "#638eb4" },
-      },
-      {
-        name: "最终执行失败题数",
-        type: "bar",
-        data: errors.map((x) => x.final_failed_items),
-        itemStyle: { color: colors[0] },
-      },
-      {
-        name: "已恢复题数",
-        type: "bar",
-        data: errors.map((x) => x.recovered_items),
-        itemStyle: { color: colors[2] },
-      },
+      { name: "发生异常的题", type: "bar", data: errors.map(x => x.affected_items), itemStyle: { color: "#638eb4" } },
+      { name: "最终执行失败", type: "bar", data: errors.map(x => x.final_failed_items), itemStyle: { color: "#c35550" } },
+      { name: "异常已恢复", type: "bar", data: errors.map(x => x.recovered_items), itemStyle: { color: "#287c65" } },
     ],
-  };
-  const typeOption: EChartsOption = {
-    color: colors,
-    tooltip: { trigger: "axis" },
-    legend: { top: 0, type: "scroll" },
-    grid: { containLabel: true, top: 55, bottom: 50 },
-    xAxis: { type: "category", data: qs, axisLabel: { rotate: 15 } },
-    yAxis: { type: "value", minInterval: 1 },
-    series: ["0", "1", "2", "None"].map((score) => ({
-      name: score === "None" ? "缺分" : `${score}分`,
-      type: "bar",
-      stack: "scores",
-      data: types.map((x) => Number(x[`score_${score}`] || 0)),
-    })),
   };
   const heatmap: EChartsOption = {
-    tooltip: {},
-    grid: { containLabel: true, bottom: 80 },
-    visualMap: {
-      min: 0,
-      max: Math.max(1, ...r.heatmap.map((x) => x.count)),
-      orient: "horizontal",
-      left: "center",
-      bottom: 0,
-    },
-    xAxis: {
-      type: "category",
-      data: errors.map((x) => x.label),
-      axisLabel: { rotate: 30 },
-    },
-    yAxis: { type: "category", data: qs },
-    series: [
-      {
-        type: "heatmap",
-        label: { show: true },
-        data: r.heatmap.map((x) => [
-          es.indexOf(x.code),
-          qs.indexOf(x.question_type),
-          x.count,
-        ]),
-      },
-    ],
+    tooltip: {}, grid: { containLabel: true, bottom: 90, left: 10 },
+    visualMap: { min: 0, max: Math.max(1, ...r.heatmap.map(x => x.count)), orient: "horizontal", left: "center", bottom: 0 },
+    xAxis: { type: "category", data: errors.map(x => x.label), axisLabel: { rotate: 30 } },
+    yAxis: { type: "category", data: qs.map(displayLabel) },
+    series: [{ type: "heatmap", label: { show: true }, data: r.heatmap.map(x => [es.indexOf(x.code), qs.indexOf(x.question_type), x.count]) }],
   };
   const matrix: EChartsOption = {
-    tooltip: {},
-    grid: { containLabel: true, bottom: 55 },
-    visualMap: {
-      min: 0,
-      max: Math.max(1, ...r.behavior_matrix.map((x) => x.count)),
-      orient: "horizontal",
-      left: "center",
-      bottom: 0,
-    },
-    xAxis: { type: "category", name: "实际", data: actions },
-    yAxis: { type: "category", name: "预期", data: actions },
-    series: [
-      {
-        type: "heatmap",
-        label: { show: true },
-        data: r.behavior_matrix.map((x) => [
-          actions.indexOf(x.actual),
-          actions.indexOf(x.expected),
-          x.count,
-        ]),
-      },
-    ],
+    tooltip: {}, grid: { containLabel: true, bottom: 55 },
+    visualMap: { min: 0, max: Math.max(1, ...r.behavior_matrix.map(x => x.count)), orient: "horizontal", left: "center", bottom: 0 },
+    xAxis: { type: "category", name: "实际", data: actions.map(displayLabel) },
+    yAxis: { type: "category", name: "预期", data: actions.map(displayLabel) },
+    series: [{ type: "heatmap", label: { show: true }, data: r.behavior_matrix.map(x => [actions.indexOf(x.actual), actions.indexOf(x.expected), x.count]) }],
   };
-  return (
-    <>
+  return <>
+    <div className="analysis-grid analysis-overview">
+      <article>
+        <h4>回答结果 · 全部 {r.item_count} 题</h4>
+        <p>有效评分 {r.denominators.quality_valid} 题，未评分 {r.denominators.quality_missing} 题。点击条形查看对应题目。</p>
+        <AnalysisChart label="回答结果分布" option={quality} height={250} onClick={name => selectGroup({ score: name })} />
+      </article>
+      <article className="analysis-reading-guide">
+        <h4>怎么读这份报告</h4>
+        <p><b>绿色答对，黄色部分答对，红色答错，灰色未评分。</b>这些分类覆盖全部题目，未评分题不会被当成答错。</p>
+        <p>答对率 = 2分题数 ÷ 有效评分题数。部分答对单独展示。</p>
+        <p>运行异常单独统计：一题可能先超时、后恢复并答对。异常题数和错题数不能相加。</p>
+        <p>图表始终展示本轮全部题目；点击图表只筛选下方案例。多轮细节与行为判定在进阶分析中查看。</p>
+      </article>
+    </div>
+    <article className="analysis-distribution">
+      <h4>哪些题答对了，哪些题还需改进？</h4>
+      <div className="analysis-toolbar">
+        <label>分组方式<select aria-label="分布分组方式" value={dimension} onChange={e => setDimension(e.target.value)}>
+          {Object.entries(dimensions).filter(([key]) => key !== "expected_action").map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </select></label>
+        <label>显示方式<select aria-label="分布显示方式" value={ratio ? "ratio" : "count"} onChange={e => setRatio(e.target.value === "ratio")}>
+          <option value="count">题数</option><option value="ratio">组内占比</option>
+        </select></label>
+      </div>
+      <p>按数据集已标注的{dimensions[dimension]}分组，包含答对和答错的全部题目；缺少分类显示为未标注。多标签题可出现在多组，组间题数可能重叠。</p>
+      {rows.length ? <>
+        <AnalysisChart label="分类答对答错分布" option={distribution} height={Math.max(270, rows.length * 42 + 95)} onClick={name => {
+          const value: unknown = JSON.parse(name);
+          if (Array.isArray(value) && value.length === 2) selectGroup({ [dimension]: String(value[0]), score: String(value[1]) });
+        }} />
+        <div className="analysis-table-scroll"><table>
+          <caption>{dimensions[dimension]}表现 · 点击数字筛选案例</caption>
+          <thead><tr><th>类别</th><th>总题数</th>{scores.map(s => <th key={s.value}>{s.label}</th>)}<th>答对率 / 有效评分</th></tr></thead>
+          <tbody>{rows.map(row => { const valid = row.total - Number(row.score_None || 0); return <tr key={row.value}>
+            <th title={row.value}>{displayLabel(row.value)}</th>
+            <td><button className="analysis-number" onClick={() => selectGroup({ [dimension]: row.value, score: "" })}>{row.total}</button></td>
+            {scores.map(s => <td key={s.value}><button className="analysis-number" aria-label={`${displayLabel(row.value)} ${s.label}`} onClick={() => selectGroup({ [dimension]: row.value, score: s.value })}>{Number(row[`score_${s.value}`] || 0)}</button></td>)}
+            <td>{percent(Number(row.score_2 || 0), valid)} / {valid}题</td>
+          </tr>})}</tbody>
+        </table></div>
+      </> : <p>本报告没有记录{dimensions[dimension]}分类。可切换其他维度，未标注的历史题目不自动猜测分类。</p>}
+    </article>
+    <details className="analysis-advanced">
+      <summary>进阶排查：运行异常与行为预期</summary>
+      <p>这里统计调用、工具与评分过程中的异常，包含最终答对的题。不是错题分类。</p>
       <div className="analysis-grid">
-        <article>
-          <h4>质量分布</h4>
-          <p>
-            题 {r.item_count}，有效 {r.denominators.quality_valid}，缺分{" "}
-            {r.denominators.quality_missing}；轮 {r.denominators.turns}，有效{" "}
-            {r.denominators.turn_quality_valid}
-          </p>
-          <AnalysisChart label="分数分布" option={quality} />
+        <article><h4>运行异常分布 · 点击筛选</h4><p>全部 {r.item_count} 题中，{r.counts.affected_items || 0}题发生过异常，共 {r.counts.events || 0} 次；类别可重叠。</p>
+          {!errors.length && <p>未记录到运行异常。</p>}
+          <AnalysisChart label="错误分布" option={errorOption} onClick={name => selectGroup({ code: errors.find(x => x.label === name)?.code || "", score: "" })} />
         </article>
-        <article>
-          <h4>错误分布 · 点击筛选</h4>
-          <p>
-            分母 {r.item_count} 题；类别可重叠；共 {r.counts.events || 0} 次事件
-          </p>
-          <AnalysisChart
-            label="错误分布"
-            option={errorOption}
-            onClick={(name) =>
-              filter({ code: errors.find((x) => x.label === name)?.code || "" })
-            }
-          />
-        </article>
-        <article>
-          <h4>题型表现 · 点击筛选</h4>
-          <p>
-            分母 {r.item_count} 题，未知题型{" "}
-            {r.counts.missing_question_type || 0}；堆叠含缺分
-          </p>
-          <AnalysisChart
-            label="题型表现"
-            option={typeOption}
-            onClick={(name) => filter({ question_type: name })}
-          />
-        </article>
-        <article>
-          <h4>题型 × 错误 · 点击筛选</h4>
-          <p>
-            分母 {r.item_count} 题，缺轨迹 {r.counts.missing_trace || 0}
-            ；类别可重叠
-          </p>
-          <AnalysisChart
-            label="题型错误热力图"
-            option={heatmap}
-            onClick={(_, value) => {
-              if (Array.isArray(value))
-                filter({
-                  code: es[Number(value[0])],
-                  question_type: qs[Number(value[1])],
-                });
-            }}
-          />
+        <article><h4>题目形式 × 运行异常</h4><p>数字是发生该类异常的题数；缺轨迹 {r.counts.missing_trace || 0}题。</p>
+          <AnalysisChart label="题型错误热力图" option={heatmap} onClick={(_, value) => {
+            if (Array.isArray(value)) selectGroup({ code: es[Number(value[0])], question_type: qs[Number(value[1])], score: "" });
+          }} />
         </article>
       </div>
+      <h4>对话轮级评分</h4>
+      <p>共 {r.denominators.turns} 轮，有效评分 {r.denominators.turn_quality_valid} 轮，未评分 {r.denominators.turns - r.denominators.turn_quality_valid} 轮。这里每轮计一次，多轮对话不会与上方题数混算。</p>
+      <table><thead><tr>{scores.map(s => <th key={s.value}>{s.label}</th>)}</tr></thead><tbody><tr>{scores.map(s => <td key={s.value}>{r.counts[`turn_score_${s.value}`] || 0}轮</td>)}</tr></tbody></table>
       <h4>行为预期 × 实际 · 点击筛选</h4>
-      <p>
-        分母 {r.denominators.turns} 轮，有效 {r.denominators.behavior_valid}
-        ，缺失 {r.denominators.behavior_missing}；未出现的行为为未覆盖。
-      </p>
-      <AnalysisChart
-        label="行为混淆矩阵"
-        option={matrix}
-        onClick={(_, value) => {
-          if (Array.isArray(value))
-            filter({
-              actual_action: actions[Number(value[0])],
-              expected_action: actions[Number(value[1])],
-            });
-        }}
-      />
-    </>
-  );
+      <p>逐轮统计：共 {r.denominators.turns} 轮，有效行为判定 {r.denominators.behavior_valid} 轮，缺失 {r.denominators.behavior_missing} 轮。未出现的行为属于未覆盖。</p>
+      <AnalysisChart label="行为混淆矩阵" option={matrix} onClick={(_, value) => {
+        if (Array.isArray(value)) selectGroup({ actual_action: actions[Number(value[0])], expected_action: actions[Number(value[1])], score: "" });
+      }} />
+    </details>
+  </>;
 }

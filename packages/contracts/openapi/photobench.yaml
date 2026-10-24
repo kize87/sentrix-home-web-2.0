@@ -858,6 +858,59 @@ paths:
           type: string
           default: ''
           title: Execution
+      - name: task_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Task Type
+      - name: angle
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Angle
+      - name: difficulty
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Difficulty
+      - name: answerability
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Answerability
+      - name: media_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Media Type
+      - name: conversation_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Conversation Type
+      - name: anomaly
+        in: query
+        required: false
+        schema:
+          enum:
+          - ''
+          - 'yes'
+          - 'no'
+          type: string
+          default: ''
+          title: Anomaly
       responses:
         '200':
           description: Successful Response
@@ -944,6 +997,59 @@ paths:
           type: string
           default: ''
           title: Execution
+      - name: task_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Task Type
+      - name: angle
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Angle
+      - name: difficulty
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Difficulty
+      - name: answerability
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Answerability
+      - name: media_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Media Type
+      - name: conversation_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Conversation Type
+      - name: anomaly
+        in: query
+        required: false
+        schema:
+          enum:
+          - ''
+          - 'yes'
+          - 'no'
+          type: string
+          default: ''
+          title: Anomaly
       responses:
         '200':
           description: Successful Response

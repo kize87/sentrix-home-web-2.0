@@ -328,7 +328,7 @@ def test_failed_and_cancelled_analysis_does_not_change_run(tmp_path: Path):
 
 def test_api_contract_pagination_cancel_and_legacy_source(tmp_path: Path):
     root = tmp_path / "results"
-    p = write_run(root)
+    p = write_run(root, items=[item(task_type="T5_event_summary", angle="activity", difficulty="medium")])
     (p / "results.jsonl").unlink()
     config = tmp_path / "config"
     config.mkdir()
@@ -357,6 +357,13 @@ def test_api_contract_pagination_cancel_and_legacy_source(tmp_path: Path):
         assert r.status_code == 200 and r.json()["report"]["denominators"]["qa"] == 1
         assert client.get(f"/api/v1/analyses/{key}/cases?score=2").json()["total"] == 0
         assert client.get(f"/api/v1/analyses/{key}/cases?page_size=101").status_code == 422
+        selected = "task_type=T5_event_summary&angle=activity&difficulty=medium&score=low&anomaly=no"
+        assert client.get(f"/api/v1/analyses/{key}/cases?{selected}").json()["total"] == 1
+        exported = client.get(f"/api/v1/analyses/{key}/export?format=json&{selected}").json()
+        assert len(exported["cases"]) == 1 and exported["filters"]["task_type"] == "T5_event_summary"
+        assert client.get(f"/api/v1/analyses/{key}/cases?task_type=T3_enumeration").json()["total"] == 0
+        assert client.get(f"/api/v1/analyses/{key}/cases?anomaly=yes").json()["total"] == 0
+
         assert (
             client.get(f"/api/v1/analyses/{key}/export?format=html")
             .headers["content-type"]
@@ -517,3 +524,24 @@ def test_snapshot_pointer_change_cannot_mix_metadata_and_results(tmp_path, monke
     assert selected["status"] == "completed"
     assert selected["path"] == str(old_rows)
     assert selected["revision"] != worker.revision(tmp_path, "r")
+
+
+def test_quality_and_classification_filters_include_correct_and_partial_without_inventing_labels():
+    cases = [
+        case_from_item(item(qa_id=f"q{i}", judge={"score": score}, task_type=task), i)
+        for i, (score, task) in enumerate(
+            [(2, "T5_event_summary"), (1, "T3_enumeration"), (0, "T1_retrieve_media"), (None, None)]
+        )
+    ]
+    # Correctness and runtime anomalies remain independent.
+    cases[0]["events"] = [{"code": "request_timeout", "recovery": "recovered"}]
+    assert [c["index"] for c in cases if matches(c, {"score": "low"})] == [1, 2]
+    assert [c["index"] for c in cases if matches(c, {"score": "2", "anomaly": "yes"})] == [0]
+    assert [c["index"] for c in cases if matches(c, {"task_type": "T3_enumeration", "score": "low"})] == [1]
+    assert [c["index"] for c in cases if matches(c, {"task_type": "unknown", "score": "None"})] == [3]
+    assert [c["index"] for c in cases if matches(c, {"anomaly": "no"})] == [1, 2, 3]
+    assert not matches(cases[0], {"difficulty": "hard"})
+    r = report(cases)
+    assert r["counts"]["score_2"] == 1 and r["counts"]["affected_items"] == 1
+    assert r["denominators"]["quality_valid"] == 3
+    assert r["groups"]["task_type"][0]["score_2"] == 1

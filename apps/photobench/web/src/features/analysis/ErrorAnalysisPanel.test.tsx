@@ -68,6 +68,7 @@ const report: AnalysisReport = {
 };
 function setup(stale = false) {
   vi.mocked(api).mockImplementation(async (path) => {
+    if (path.startsWith("/runs?")) return { runs: [{ run_id: "r", status: "completed" }, { run_id: "other", status: "completed", qa_set: "sample", model_name: "model" }], has_next: false } as never;
     if (path === "/config")
       return {
         judge_providers: [{ id: "test", label: "诊断", model: "J" }],
@@ -114,7 +115,7 @@ describe("错误分析闭环", () => {
     await screen.findByLabelText("选择 q1");
     fireEvent.click(screen.getByLabelText("选择 q1"));
     fireEvent.change(screen.getByLabelText("分析模型"), {target: {value: "test"}});
-    fireEvent.change(screen.getByLabelText("对比Run ID"), {target: {value: "other"}});
+    fireEvent.change(screen.getByLabelText("选择对比运行"), {target: {value: "other"}});
     expect((screen.getByText("创建对比报告") as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByText("确认并分析所选案例") as HTMLButtonElement).disabled).toBe(true);
     expect(post).not.toHaveBeenCalled();
@@ -137,7 +138,7 @@ describe("错误分析闭环", () => {
     expect(vi.mocked(api).mock.calls.some(([p]) => p.includes("/items/"))).toBe(
       false,
     );
-    expect(screen.getByLabelText("错误类别")).toHaveProperty(
+    expect(screen.getByLabelText("运行异常类别")).toHaveProperty(
       "value",
       "context_soft_limit",
     );
@@ -186,4 +187,56 @@ describe("错误分析闭环", () => {
     expect(post).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
+});
+
+it("全选本页、快捷选低分及异常题只选择不发模型请求，保留分类并限制20题", async () => {
+  setup();
+  const fallback = vi.mocked(api).getMockImplementation()!;
+  vi.mocked(api).mockImplementation(async (path, options) => {
+    if (path.includes("page_size=100")) return {items: Array.from({length: 25}, (_, index) => ({index})), total: 25} as never;
+    return fallback(path, options);
+  });
+  render(<ErrorAnalysisPanel runId="r" terminal />);
+  fireEvent.click(screen.getByText("错误分析 展开"));
+  await screen.findByLabelText("选择 q1");
+  fireEvent.click(screen.getByText("全选本页"));
+  expect((screen.getByLabelText("选择 q1") as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByText("选择未完全答对题"));
+  await screen.findByText(/未完全答对题：已选 20 题/);
+  expect(api).toHaveBeenCalledWith(expect.stringContaining("score=low"));
+  fireEvent.click(screen.getByText("选择运行异常题"));
+  await screen.findByText(/运行异常题：已选 20 题/);
+  expect(api).toHaveBeenCalledWith(expect.stringContaining("anomaly=yes"));
+  expect(post).not.toHaveBeenCalled();
+});
+
+it("下拉选择运行后无需手输ID，可直接创建对比", async () => {
+  setup();
+  vi.mocked(post).mockResolvedValue({job_id: "compare", status: "completed", processed: 0});
+  render(<ErrorAnalysisPanel runId="r" terminal />);
+  fireEvent.click(screen.getByText("错误分析 展开"));
+  await screen.findByRole("option", {name: /model.*sample/});
+  fireEvent.change(screen.getByLabelText("选择对比运行"), {target: {value: "other"}});
+  fireEvent.click(screen.getByText("创建对比报告"));
+  await waitFor(() => expect(post).toHaveBeenCalledWith("/runs/r/analysis", {kind: "compare", left_job: "j", right_job: "j"}));
+  expect(screen.queryByLabelText("对比Run ID")).toBeNull();
+});
+
+it("另一轮无报告时自动准备规则报告，完成后衔接对比", async () => {
+  setup();
+  const fallback = vi.mocked(api).getMockImplementation()!;
+  vi.mocked(api).mockImplementation(async (path, options) => {
+    if (path === "/runs/other/analysis") return {status: "not_generated"} as never;
+    if (path === "/analyses/prepared") return {job_id: "prepared", status: "completed", processed: 1} as never;
+    return fallback(path, options);
+  });
+  vi.mocked(post).mockImplementation(async (path) => ({job_id: path === "/runs/other/analysis" ? "prepared" : "comparison", status: path === "/runs/other/analysis" ? "queued" : "completed", processed: 0}) as never);
+  render(<ErrorAnalysisPanel runId="r" terminal />);
+  fireEvent.click(screen.getByText("错误分析 展开"));
+  await screen.findByRole("option", {name: /model.*sample/});
+  fireEvent.change(screen.getByLabelText("选择对比运行"), {target: {value: "other"}});
+  fireEvent.click(screen.getByText("创建对比报告"));
+  await screen.findByText(/正在准备所选运行的规则报告/);
+  await waitFor(() => expect(post).toHaveBeenCalledWith("/runs/r/analysis", {kind: "compare", left_job: "j", right_job: "prepared"}), {timeout: 3500});
+  expect(post).toHaveBeenCalledWith("/runs/other/analysis", {kind: "rules"});
 });

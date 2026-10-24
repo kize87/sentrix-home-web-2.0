@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, BASE, post } from "../../api/client.ts";
 import type {
   AnalysisCase,
@@ -10,6 +10,8 @@ import type {
   DiagnosisReport,
 } from "../../api/analysis.ts";
 import { activeAnalysis } from "../../api/analysis.ts";
+import { ComparisonPicker } from "./ComparisonPicker.tsx";
+import { dimensions, displayLabel, percent, scoreLabel, scores } from "./presentation.ts";
 import { AnalysisCharts } from "./AnalysisCharts.tsx";
 import "./analysis.css";
 
@@ -111,8 +113,9 @@ function CaseCard({
           onClick={(e) => e.stopPropagation()}
           onChange={toggle}
         />{" "}
-        {c.qa_id || c.index} · {c.score == null ? "缺分" : `${c.score}分`} ·
-        执行{c.execution} · {c.events.length}次异常
+        <span className={`analysis-outcome outcome-${c.score ?? "None"}`}>{scoreLabel(c.score)}</span>{" "}
+        {c.question || c.qa_id || c.index}
+        <small>{c.qa_id} · {displayLabel(c.dimensions.task_type || "unknown")} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
       </summary>
       <h5>问题</h5>
       <p>{c.question}</p>
@@ -190,6 +193,12 @@ export function ErrorAnalysisPanel({
     page: 1,
     page_size: 20,
   });
+  const selectionEpoch = useRef(0);
+  useEffect(() => { selectionEpoch.current++; }, [filters, job?.job_id]);
+  const [casesLoading, setCasesLoading] = useState(false);
+  const [selectionNote, setSelectionNote] = useState("");
+  const [diagnosed, setDiagnosed] = useState<number[]>([]);
+  const [preparingOther, setPreparingOther] = useState<AnalysisJob | null>(null);
   const [selected, setSelected] = useState<number[]>([]),
     [provider, setProvider] = useState("");
   const [providers, setProviders] = useState<
@@ -245,14 +254,15 @@ export function ErrorAnalysisPanel({
   useEffect(() => {
     if (!open || job?.status !== "completed" || !job.job_id) return;
     let alive = true;
+    setCasesLoading(true);
     void api<AnalysisPage>(
       `/analyses/${job.job_id}/cases?${new URLSearchParams({ ...filters, page: String(page), page_size: "20" })}`,
     )
       .then((x) => {
-        if (alive) setData(x);
+        if (alive) { setData(x); setCasesLoading(false); }
       })
       .catch((e) => {
-        if (alive) setError(String(e));
+        if (alive) { setError(String(e)); setData({ items: [], total: 0, page, page_size: 20 }); setCasesLoading(false); }
       });
     return () => {
       alive = false;
@@ -285,10 +295,34 @@ export function ErrorAnalysisPanel({
       window.clearInterval(timer);
     };
   }, [open, ai, compare]);
+  useEffect(() => {
+    setSelected([]); setSelectionNote(""); setDiagnosed([]); setAi(null); setCompare(null); setPreparingOther(null);
+  }, [job?.job_id]);
+  useEffect(() => {
+    if (ai?.report) setDiagnosed(old => [...new Set([...old, ...ai.report!.cases.filter(c => c.valid).map(c => c.index)])]);
+  }, [ai?.report]);
+  useEffect(() => {
+    if (!open || !preparingOther?.job_id) return;
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const other = await api<AnalysisJob>(`/analyses/${preparingOther.job_id}`);
+          if (!alive) return;
+          if (other.status === "completed" && !other.stale) {
+            const result = await post<AnalysisJob<ComparisonReport>>(runPath(runId), { kind: "compare", left_job: job?.job_id, right_job: other.job_id });
+            if (alive) { setCompare(result); setPreparingOther(null); setCp(1); }
+          } else if (activeAnalysis(other)) setPreparingOther(other);
+          else { setError(`对比运行的报告${status[other.status] || other.status}，请重试。${other.error || ""}`); setPreparingOther(null); }
+        } catch (e) { if (alive) { setError(String(e)); setPreparingOther(null); } }
+      })();
+    }, 1500);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [open, preparingOther, job?.job_id, runId]);
   const r = job?.status === "completed" ? job.report : undefined;
   function filter(v: AnalysisFilters) {
     setFilters((old) => ({ ...old, ...v }));
-    setPage(1);
+    setPage(1); setCasesLoading(true); setSelected([]); setSelectionNote("");
   }
   async function act(fn: () => Promise<void>) {
     setPending(true);
@@ -328,18 +362,35 @@ export function ErrorAnalysisPanel({
         }),
       );
     });
+  const chooseBatch = (extra: AnalysisFilters, label: string, skipDiagnosed = false) =>
+    act(async () => {
+      if (!job?.job_id || job.stale) return;
+      const epoch = selectionEpoch.current;
+      const chosen: number[] = [];
+      let currentPage = 1, total = 0;
+      do {
+        const result = await api<AnalysisPage>(`/analyses/${job.job_id}/cases?${new URLSearchParams({ ...filters, ...extra, page: String(currentPage), page_size: "100" })}`);
+        if (epoch !== selectionEpoch.current) return;
+        total = result.total;
+        for (const c of result.items) {
+          if ((!skipDiagnosed || !diagnosed.includes(c.index)) && !chosen.includes(c.index)) chosen.push(c.index);
+          if (chosen.length >= 20) break;
+        }
+        currentPage++;
+      } while (skipDiagnosed && chosen.length < 20 && (currentPage - 1) * 100 < total);
+      setSelected(chosen);
+      setSelectionNote(`${label}：已选 ${chosen.length} 题（匹配 ${total} 题，每批最多20题${skipDiagnosed ? "，跳过本报告本次会话已有效诊断题" : ""}）。仅选题，尚未发送给分析模型。`);
+    });
   const compareRuns = () =>
     act(async () => {
-      const other = await api<AnalysisJob>(runPath(otherRun.trim()));
-      if (!other.job_id || other.status !== "completed" || other.stale)
-        throw new Error("另一轮需要先生成有效规则报告。");
-      setCompare(
-        await post(runPath(runId), {
-          kind: "compare",
-          left_job: job?.job_id,
-          right_job: other.job_id,
-        }),
-      );
+      if (!otherRun || otherRun === runId) return;
+      let other = await api<AnalysisJob>(runPath(otherRun));
+      if (!other.job_id || other.status !== "completed" || other.stale) {
+        if (!activeAnalysis(other) || other.stale) other = await post(runPath(otherRun), { kind: "rules" });
+        setPreparingOther(other);
+        return;
+      }
+      setCompare(await post(runPath(runId), { kind: "compare", left_job: job?.job_id, right_job: other.job_id }));
       setCp(1);
     });
   const openHistory = (h: AnalysisJob<unknown>) =>
@@ -430,20 +481,18 @@ export function ErrorAnalysisPanel({
           )}
           {r && (
             <>
+              <h3>本轮答题表现</h3>
+              <p className="analysis-lead">分析范围是本轮全部 <b>{r.item_count}</b> 题，包含答对、部分答对、答错和未评分。答对率 <b>{percent(r.counts.score_2 || 0, r.denominators.quality_valid)}</b>（{r.counts.score_2 || 0}/{r.denominators.quality_valid}题有效评分）。</p>
               <div className="analysis-stats">
-                {[
-                  ["总题数", r.item_count],
-                  ["执行失败", r.counts.execution_failed || 0],
-                  ["取消", r.counts.execution_cancelled || 0],
-                  ["发生异常", r.counts.affected_items || 0],
-                  ["全部异常恢复", r.counts.fully_recovered_items || 0],
-                  ["缺分", r.denominators.quality_missing],
-                ].map(([label, n]) => (
-                  <div key={label}>
-                    <span>{label}</span>
-                    <strong>{n}</strong>
-                  </div>
-                ))}
+                <button className="analysis-stat" onClick={() => { setFilters({}); setPage(1); setSelected([]); setSelectionNote(""); }}><span>全部题目</span><strong>{r.item_count}</strong><small>点击查看全部</small></button>
+                {scores.map(score => <button key={score.value} className={`analysis-stat outcome-${score.value}`} onClick={() => { setFilters({ score: score.value }); setPage(1); setSelected([]); setSelectionNote(""); }}>
+                  <span>{score.label}</span><strong>{r.counts[`score_${score.value}`] || 0}</strong><small>占全部题目 {percent(r.counts[`score_${score.value}`] || 0, r.item_count)}</small>
+                </button>)}
+              </div>
+              <div className="analysis-runtime-summary">
+                <b>运行过程（与回答对错分别统计）</b>
+                <span>发生过异常 {r.counts.affected_items || 0}题</span><span>全部异常已恢复 {r.counts.fully_recovered_items || 0}题</span>
+                <span>最终执行失败 {r.counts.execution_failed || 0}题</span><span>取消 {r.counts.execution_cancelled || 0}题</span>
               </div>
               <p>
                 范围：{String(r.source.status)} ·{" "}
@@ -488,22 +537,22 @@ export function ErrorAnalysisPanel({
                 <summary>题目覆盖全部维度</summary>
                 {Object.entries(r.groups).map(([dim, rows]) => (
                   <div key={dim}>
-                    <h4>{dim}</h4>
+                    <h4>{dimensions[dim] || dim}</h4>
                     <table>
                       <thead>
                         <tr>
                           <th>类别</th>
                           <th>题数</th>
-                          <th>有效分数</th>
-                          <th>缺分</th>
+                          <th>答对</th><th>部分答对</th><th>答错</th><th>有效评分</th>
+                          <th>未评分</th>
                         </tr>
                       </thead>
                       <tbody>
                         {rows.map((x) => (
                           <tr key={x.value}>
-                            <td>{x.value}</td>
+                            <td title={x.value}>{displayLabel(x.value)}</td>
                             <td>{x.total}</td>
-                            <td>{x.total - Number(x.score_None || 0)}</td>
+                            <td>{x.score_2 || 0}</td><td>{x.score_1 || 0}</td><td>{x.score_0 || 0}</td><td>{x.total - Number(x.score_None || 0)}</td>
                             <td>{x.score_None || 0}</td>
                           </tr>
                         ))}
@@ -522,24 +571,21 @@ export function ErrorAnalysisPanel({
                 {r.counts.candidate_hit_not_delivered || 0}题 · 已交付但回答低分{" "}
                 {r.counts.delivered_low_score || 0}题
               </p>
-              <h4>案例排查</h4>
+              <h3>查看具体题目</h3>
+              <p>图表展示全部题目，以下列表按条件筛选；所有条件同时生效。可查看正确案例，也可定位未完全答对或运行异常的题目。</p>
               <div className="analysis-toolbar">
                 {Object.entries({
-                  code: ["错误类别", r.errors.map((x) => [x.code, x.label])],
+                  code: ["运行异常类别", r.errors.map((x) => [x.code, x.label])],
                   question_type: [
-                    "题型",
+                    "题目形式",
                     (r.groups.question_type || []).map((x) => [
                       x.value,
-                      x.value,
+                      displayLabel(x.value),
                     ]),
                   ],
-                  score: [
-                    "分数",
-                    ["0", "1", "2", "None"].map((x) => [
-                      x,
-                      x === "None" ? "缺分" : x,
-                    ]),
-                  ],
+                  ...Object.fromEntries(Object.entries(dimensions).filter(([key]) => !["question_type", "expected_action"].includes(key)).map(([key, label]) => [key, [label, (r.groups[key] || []).map(x => [x.value, displayLabel(x.value)])]])),
+                  score: ["回答结果", [...scores.map(x => [x.value, x.label]), ["low", "未完全答对（0/1分）"]]],
+                  anomaly: ["运行异常", [["yes", "发生过异常"], ["no", "未记录异常"]]],
                   recovery: [
                     "恢复状态",
                     [
@@ -552,20 +598,20 @@ export function ErrorAnalysisPanel({
                     "预期行为",
                     ["answer", "refuse", "clarify", "unknown"].map((x) => [
                       x,
-                      x,
+                      displayLabel(x),
                     ]),
                   ],
                   actual_action: [
                     "实际行为",
                     ["answer", "refuse", "clarify", "none", "unknown"].map(
-                      (x) => [x, x],
+                      (x) => [x, displayLabel(x)],
                     ),
                   ],
                   execution: [
                     "执行状态",
                     ["normal", "failed", "cancelled", "unknown"].map((x) => [
                       x,
-                      x,
+                      displayLabel(x),
                     ]),
                   ],
                 } as Record<string, [string, string[][]]>).map(
@@ -591,7 +637,7 @@ export function ErrorAnalysisPanel({
                   className="btn compact"
                   onClick={() => {
                     setFilters({});
-                    setPage(1);
+                    setPage(1); setSelected([]); setSelectionNote("");
                   }}
                 >
                   清空筛选
@@ -602,66 +648,19 @@ export function ErrorAnalysisPanel({
                 筛选命中 {data.total}/{r.item_count}题 · 第{page}页；已选择{" "}
                 {selected.length}/20题用于AI诊断。
               </p>
-              {data.items.map((c) => (
-                <CaseCard
-                  key={`${job?.job_id}-${c.index}`}
-                  c={c}
-                  runId={runId}
-                  selected={selected.includes(c.index)}
-                  toggle={() => {
-                    if (selected.includes(c.index))
-                      setSelected(selected.filter((i) => i !== c.index));
-                    else if (selected.length < 20)
-                      setSelected([...selected, c.index]);
-                    else setError("每批最多20题，可分批继续。");
-                  }}
-                />
-              ))}
-              <div className="analysis-toolbar">
-                <button
-                  className="btn compact"
-                  disabled={page <= 1}
-                  onClick={() => setPage(page - 1)}
-                >
-                  上一页
-                </button>
-                <button
-                  className="btn compact"
-                  disabled={page * 20 >= data.total}
-                  onClick={() => setPage(page + 1)}
-                >
-                  下一页
-                </button>
-                <button className="btn compact" onClick={() => setSelected([])}>
-                  清空选择
-                </button>
+              <div className="analysis-toolbar analysis-bulk">
+                <button className="btn compact" disabled={pending || casesLoading || !data.items.length || !!job?.stale} onClick={() => { setSelected(data.items.map(c => c.index)); setSelectionNote("已选择本页全部题目，仅选题，尚未发送给分析模型。"); }}>全选本页</button>
+                <button className="btn compact" disabled={pending || !!job?.stale} onClick={() => void chooseBatch({}, "当前筛选结果")}>选择当前筛选（最多20题）</button>
+                <button className="btn compact" disabled={pending || !!job?.stale} onClick={() => void chooseBatch({ score: "low" }, "未完全答对题")}>选择未完全答对题</button>
+                <button className="btn compact" disabled={pending || !!job?.stale} onClick={() => void chooseBatch({ anomaly: "yes" }, "运行异常题")}>选择运行异常题</button>
+                <button className="btn compact" disabled={pending || !!job?.stale || !diagnosed.length} onClick={() => void chooseBatch({}, "下一批未分析题", true)}>选择下一批未分析题</button>
+                <button className="btn compact" onClick={() => { setSelected([]); setSelectionNote(""); }}>清空选择</button>
               </div>
-              <h4>两轮逐题对比</h4>
-              <div className="analysis-toolbar">
-                <label>
-                  另一轮 Run ID
-                  <input
-                    aria-label="对比Run ID"
-                    value={otherRun}
-                    onChange={(e) => setOtherRun(e.target.value)}
-                  />
-                </label>
-                <button
-                  className="btn compact"
-                  disabled={
-                    pending ||
-                    !!job?.stale ||
-                    !otherRun.trim() ||
-                    activeAnalysis(compare)
-                  }
-                  onClick={() => void compareRuns()}
-                >
-                  创建对比报告
-                </button>
-              </div>
-              <h4>可选 AI 诊断</h4>
+              <p className="analysis-hint">快捷选择保留分类等筛选，并使用对应的回答或异常条件，替换本批选择；“未完全答对”包含0/1分，“运行异常”也可能包含答对题。每批最多20题，可继续下一批。</p>
+              {selectionNote && <p role="status">{selectionNote}</p>}
+              <h3>AI 辅助分析</h3>
               <p>
-                默认关闭。只分析选择的案例，每批最多20题，并发1；可分批继续。
+                先用上方快捷按钮批量选题，再选分析模型。当前已选 {selected.length} 题；默认关闭，确认后才发送证据，每批最多20题，并发1。AI建议单独展示，不改原分数。
               </p>
               <div className="analysis-toolbar">
                 <select
@@ -690,6 +689,46 @@ export function ErrorAnalysisPanel({
                   确认并分析所选案例
                 </button>
               </div>
+              {casesLoading ? <p role="status">正在读取筛选结果…</p> : data.total === 0 ? <p>没有符合当前条件的题目。可清空筛选查看全部。</p> : data.items.map((c) => (
+                <CaseCard
+                  key={`${job?.job_id}-${c.index}`}
+                  c={c}
+                  runId={runId}
+                  selected={selected.includes(c.index)}
+                  toggle={() => {
+                    if (pending) return;
+                    setSelectionNote("");
+                    if (selected.includes(c.index))
+                      setSelected(selected.filter((i) => i !== c.index));
+                    else if (selected.length < 20)
+                      setSelected([...selected, c.index]);
+                    else setError("每批最多20题，可分批继续。");
+                  }}
+                />
+              ))}
+              <div className="analysis-toolbar">
+                <button
+                  className="btn compact"
+                  disabled={casesLoading || page <= 1}
+                  onClick={() => setPage(page - 1)}
+                >
+                  上一页
+                </button>
+                <button
+                  className="btn compact"
+                  disabled={casesLoading || page * 20 >= data.total}
+                  onClick={() => setPage(page + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+              <h3>两轮逐题对比</h3>
+              <p>以当前这轮为基准，选择另一轮历史测评。系统按题目与GT配对，说明改善、退步和不可比范围；另一轮缺少有效报告时，会先自动生成。</p>
+              <ComparisonPicker runId={runId} value={otherRun} onChange={setOtherRun} disabled={pending || !!preparingOther || activeAnalysis(compare)} />
+              <div className="analysis-toolbar">
+                <button className="btn compact" disabled={pending || !!job?.stale || !otherRun || !!preparingOther || activeAnalysis(compare)} onClick={() => void compareRuns()}>创建对比报告</button>
+                {preparingOther && <><span role="status">正在准备所选运行的规则报告：{status[preparingOther.status] || preparingOther.status}，完成后自动对比。</span><button className="btn compact" onClick={() => setPreparingOther(null)}>停止等待</button></>}
+              </div>
             </>
           )}
           {compare && (
@@ -715,18 +754,18 @@ export function ErrorAnalysisPanel({
                 <>
                   <p>
                     {compare.report.comparable
-                      ? `配对表现：${pretty(compare.report.quality_changes)}`
+                      ? `另一轮相对本轮：改善 ${compare.report.quality_changes?.improved || 0} 题，退步 ${compare.report.quality_changes?.regressed || 0} 题，持平 ${compare.report.quality_changes?.unchanged || 0} 题，缺分等无法判定 ${compare.report.quality_changes?.unknown || 0} 题。`
                       : "配置不具可比性，仅并排展示事实，不给出版本提升结论。"}
                   </p>
                   <p>
                     配置差异：
-                    {compare.report.differences.join("、") ||
+                    {compare.report.differences.map(displayLabel).join("、") ||
                       "未发现已记录差异"}
-                    ；配对：{pretty(compare.report.pairing_counts)}；重复/空ID：
+                    ；定义一致 {compare.report.pairing_counts.paired || 0}题，定义变化 {compare.report.pairing_counts.changed || 0}题，未匹配 {compare.report.pairing_counts.unmatched || 0}题；重复/空ID：
                     {compare.report.duplicates.join("、") || "无"}
                   </p>
                   <p>{compare.report.note}</p>
-                  <p>未记录的关键配置：{compare.report.missing_configuration.join("、") || "无"}</p>
+                  <p>未记录的关键配置：{compare.report.missing_configuration.map(displayLabel).join("、") || "无"}</p>
                   <Exports job={compare} />
                   <details>
                     <summary>来源与配置</summary>
@@ -737,7 +776,7 @@ export function ErrorAnalysisPanel({
                     .map((row) => (
                       <details key={row.qa_id}>
                         <summary>
-                          {row.qa_id} · {row.pairing} · {row.quality_change} ·
+                          {row.qa_id} · {displayLabel(row.pairing)} · {displayLabel(row.quality_change)} ·
                           分数变化 {row.score_delta ?? "未知"}
                         </summary>
                         <p>
@@ -747,8 +786,10 @@ export function ErrorAnalysisPanel({
                           {row.errors_removed.join("、") || "无"}
                         </p>
                         <div className="analysis-grid">
-                          <pre>{pretty(row.left)}</pre>
-                          <pre>{pretty(row.right)}</pre>
+                          {[["本轮（基准）", row.left], ["所选另一轮", row.right]].map(([label, entry]) => {
+                            const c = entry as AnalysisCase | null;
+                            return <article key={String(label)}><h5>{String(label)}</h5>{c ? <><p>{c.question}</p><p>{scoreLabel(c.score)} · {displayLabel(c.execution)} · {c.events.length}次异常</p><h5>模型回答</h5><p>{c.answer || "未记录"}</p><h5>参考答案</h5><p>{c.reference_answer || "未记录"}</p><details><summary>完整案例数据</summary><pre>{pretty(c)}</pre></details></> : <p>此轮未匹配到该题。</p>}</article>;
+                          })}
                         </div>
                       </details>
                     ))}

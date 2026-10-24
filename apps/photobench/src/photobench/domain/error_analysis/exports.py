@@ -9,6 +9,24 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+DISPLAY_LABELS = {
+    "task_type": "任务类型",
+    "question_type": "题目形式",
+    "angle": "考察角度",
+    "difficulty": "难度",
+    "answerability": "可回答性",
+    "media_type": "媒体类型",
+    "conversation_type": "对话形式",
+    "expected_action": "预期行为",
+    "T1_retrieve_media": "媒体检索",
+    "T1_media_retrieval": "媒体检索",
+    "T2_fact_qa": "事实问答",
+    "T3_enumeration": "统计枚举",
+    "T5_event_summary": "事件总结",
+    "unknown": "未标注／未知",
+}
+SCORE_LABELS = {"2": "答对（2分）", "1": "部分答对（1分）", "0": "答错（0分）", "None": "未评分"}
+
 
 def _escape(value: Any) -> str:
     return html.escape(str(value if value is not None else "未记录"), quote=True)
@@ -68,6 +86,10 @@ def export_report(
                     "score",
                     "execution",
                     "question_type",
+                    "task_type",
+                    "angle",
+                    "difficulty",
+                    "outcome",
                     "errors",
                     "answer",
                     "reference_answer",
@@ -79,6 +101,10 @@ def export_report(
                         c["score"],
                         c["execution"],
                         c["dimensions"]["question_type"],
+                        c["dimensions"].get("task_type", "unknown"),
+                        c["dimensions"].get("angle", "unknown"),
+                        c["dimensions"].get("difficulty", "unknown"),
+                        SCORE_LABELS[str(c["score"])],
                         ";".join(e["code"] for e in c["events"]),
                         c["answer"],
                         c["reference_answer"],
@@ -107,25 +133,33 @@ def export_report(
         + _table(["指标", "数量"], [[k, v] for k, v in report["counts"].items()])
         + _table(["分母", "数量"], [[k, v] for k, v in report["denominators"].items()])
     )
+    body += (
+        "<h2>回答结果（全部题目）</h2><p>答对=2分，部分答对=1分，答错=0分；未评分不计为答错。运行异常与回答对错独立统计，异常也可能恢复后答对。</p>"
+        + _table(
+            ["回答结果", "题数"],
+            [[label, report["counts"].get("score_" + value, 0)] for value, label in SCORE_LABELS.items()],
+        )
+    )
     maximum = max((r["affected_items"] for r in report["errors"]), default=1)
-    body += "<h2>错误分布（类别可重叠）</h2>"
+    body += "<h2>运行异常分布（包含答对题，类别可重叠）</h2>"
     for r in report["errors"]:
         body += (
             f'<div>{_escape(r["label"])} <meter min="0" max="{maximum}" '
             f'value="{r["affected_items"]}"></meter> {r["affected_items"]}题 / {r["events"]}次；'
             f"最终执行失败 {r['final_failed_items']}题，已恢复 {r['recovered_items']}题</div>"
         )
-    for dim, rows in report["groups"].items():
-        body += f"<h2>样本分布与表现：{_escape(dim)}</h2>"
+    for dim, rows in sorted(report["groups"].items(), key=lambda pair: pair[0] != "task_type"):
+        body += f"<h2>样本分布与表现：{_escape(DISPLAY_LABELS.get(dim, dim))}</h2>"
         for row in rows:
+            label = _escape(DISPLAY_LABELS.get(row["value"], row["value"]))
             body += (
-                f"<p>{_escape(row['value'])} · 样本{row['total']} · 缺分{row.get('score_None', 0)}</p>"
+                f"<p>{label} · 全部题目{row['total']} · 未评分{row.get('score_None', 0)}</p>"
                 '<div class="stack">'
             )
-            for score in ["0", "1", "2", "None"]:
+            for score in ["2", "1", "0", "None"]:
                 n = row.get("score_" + score, 0)
                 width = n / max(1, row["total"]) * 100
-                label = "缺分" if score == "None" else score + "分"
+                label = SCORE_LABELS[score]
                 body += f'<span class="s{score}" style="width:{width:.3f}%">{label} {n}</span>'
             body += "</div>"
     body += "<h2>题型 × 错误类别</h2>" + _table(
