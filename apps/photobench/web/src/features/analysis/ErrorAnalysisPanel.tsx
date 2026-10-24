@@ -130,8 +130,8 @@ function CaseCard({
       </p>
       {c.turns.map((t) => (
         <div key={t.turn}>
-          第{t.turn + 1}轮：预期 {t.expected || "未记录"} → 实际{" "}
-          {t.actual || "未记录"}；结束原因 {t.termination_reason || "未记录"}
+          第{t.turn + 1}轮：预期 {t.expected ? displayLabel(t.expected) : "未记录"} → 实际{" "}
+          {t.actual ? displayLabel(t.actual) : "未记录"}；结束原因 {t.termination_reason || "未记录"}
           <p>{t.judge_reason}</p>
         </div>
       ))}
@@ -403,6 +403,64 @@ export function ErrorAnalysisPanel({
       } else if (h.kind === "ai") setAi(await api(`/analyses/${h.job_id}`));
       else setCompare(await api(`/analyses/${h.job_id}`));
     });
+  const filterOptions: Record<string, [string, string[][]]> = r ? {
+                  code: ["运行异常类别", r.errors.map((x) => [x.code, x.label])],
+                  question_type: [
+                    "题目形式",
+                    (r.groups.question_type || []).map((x) => [
+                      x.value,
+                      displayLabel(x.value),
+                    ]),
+                  ],
+                  ...Object.fromEntries(Object.entries(dimensions).filter(([key]) => !["question_type", "expected_action"].includes(key)).map(([key, label]) => [key, [label, (r.groups[key] || []).map(x => [x.value, displayLabel(x.value)])]])),
+                  score: ["回答结果", [...scores.map(x => [x.value, x.label]), ["low", "未完全答对（0/1分）"]]],
+                  anomaly: ["运行异常", [["yes", "发生过异常"], ["no", "未记录异常"]]],
+                  recovery: [
+                    "恢复状态",
+                    [
+                      ["recovered", "已恢复"],
+                      ["not_recovered", "未恢复"],
+                      ["unknown", "未知"],
+                    ],
+                  ],
+                  expected_action: [
+                    "预期行为",
+                    ["answer", "refuse", "clarify", "unknown"].map((x) => [
+                      x,
+                      displayLabel(x),
+                    ]),
+                  ],
+                  actual_action: [
+                    "实际行为",
+                    ["answer", "refuse", "clarify", "none", "unknown"].map(
+                      (x) => [x, displayLabel(x)],
+                    ),
+                  ],
+                  execution: [
+                    "执行状态",
+                    ["normal", "failed", "cancelled", "unknown"].map((x) => [
+                      x,
+                      displayLabel(x),
+                    ]),
+                  ],
+                } : {};
+  const renderFilter = (key: string, label: string, values: string[][]) => (
+                    <label key={key}>
+                      {label}
+                      <select
+                        aria-label={label}
+                        value={filters[key] || ""}
+                        onChange={(e) => filter({ [key]: e.target.value })}
+                      >
+                        <option value="">全部</option>
+                        {values.map(([v, text]) => (
+                          <option key={v} value={v}>
+                            {text}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+  );
   return (
     <section className="analysis-panel">
       <button
@@ -574,65 +632,11 @@ export function ErrorAnalysisPanel({
               <h3>查看具体题目</h3>
               <p>图表展示全部题目，以下列表按条件筛选；所有条件同时生效。可查看正确案例，也可定位未完全答对或运行异常的题目。</p>
               <div className="analysis-toolbar">
-                {Object.entries({
-                  code: ["运行异常类别", r.errors.map((x) => [x.code, x.label])],
-                  question_type: [
-                    "题目形式",
-                    (r.groups.question_type || []).map((x) => [
-                      x.value,
-                      displayLabel(x.value),
-                    ]),
-                  ],
-                  ...Object.fromEntries(Object.entries(dimensions).filter(([key]) => !["question_type", "expected_action"].includes(key)).map(([key, label]) => [key, [label, (r.groups[key] || []).map(x => [x.value, displayLabel(x.value)])]])),
-                  score: ["回答结果", [...scores.map(x => [x.value, x.label]), ["low", "未完全答对（0/1分）"]]],
-                  anomaly: ["运行异常", [["yes", "发生过异常"], ["no", "未记录异常"]]],
-                  recovery: [
-                    "恢复状态",
-                    [
-                      ["recovered", "已恢复"],
-                      ["not_recovered", "未恢复"],
-                      ["unknown", "未知"],
-                    ],
-                  ],
-                  expected_action: [
-                    "预期行为",
-                    ["answer", "refuse", "clarify", "unknown"].map((x) => [
-                      x,
-                      displayLabel(x),
-                    ]),
-                  ],
-                  actual_action: [
-                    "实际行为",
-                    ["answer", "refuse", "clarify", "none", "unknown"].map(
-                      (x) => [x, displayLabel(x)],
-                    ),
-                  ],
-                  execution: [
-                    "执行状态",
-                    ["normal", "failed", "cancelled", "unknown"].map((x) => [
-                      x,
-                      displayLabel(x),
-                    ]),
-                  ],
-                } as Record<string, [string, string[][]]>).map(
-                  ([key, [label, values]]) => (
-                    <label key={key}>
-                      {label}
-                      <select
-                        aria-label={label}
-                        value={filters[key] || ""}
-                        onChange={(e) => filter({ [key]: e.target.value })}
-                      >
-                        <option value="">全部</option>
-                        {values.map(([v, text]) => (
-                          <option key={v} value={v}>
-                            {text}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ),
-                )}
+                {Object.entries(filterOptions).filter(([key]) => ["score", "task_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}
+                <details className="analysis-extra-filters">
+                  <summary>更多筛选（题目形式、角度、难度、行为等）{Object.entries(filters).filter(([key, value]) => value && !["score", "task_type", "code"].includes(key)).length > 0 ? " · 已设置" : ""}</summary>
+                  <div className="analysis-toolbar">{Object.entries(filterOptions).filter(([key]) => !["score", "task_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}</div>
+                </details>
                 <button
                   className="btn compact"
                   onClick={() => {
@@ -689,6 +693,13 @@ export function ErrorAnalysisPanel({
                   确认并分析所选案例
                 </button>
               </div>
+              <h3>两轮逐题对比</h3>
+              <p>以当前这轮为基准，选择另一轮历史测评。系统按题目与GT配对，说明改善、退步和不可比范围；另一轮缺少有效报告时，会先自动生成。</p>
+              <ComparisonPicker runId={runId} value={otherRun} onChange={setOtherRun} disabled={pending || !!preparingOther || activeAnalysis(compare)} />
+              <div className="analysis-toolbar">
+                <button className="btn compact" disabled={pending || !!job?.stale || !otherRun || !!preparingOther || activeAnalysis(compare)} onClick={() => void compareRuns()}>创建对比报告</button>
+                {preparingOther && <><span role="status">正在准备所选运行的规则报告：{status[preparingOther.status] || preparingOther.status}，完成后自动对比。</span><button className="btn compact" onClick={() => setPreparingOther(null)}>停止等待</button></>}
+              </div>
               {casesLoading ? <p role="status">正在读取筛选结果…</p> : data.total === 0 ? <p>没有符合当前条件的题目。可清空筛选查看全部。</p> : data.items.map((c) => (
                 <CaseCard
                   key={`${job?.job_id}-${c.index}`}
@@ -721,13 +732,6 @@ export function ErrorAnalysisPanel({
                 >
                   下一页
                 </button>
-              </div>
-              <h3>两轮逐题对比</h3>
-              <p>以当前这轮为基准，选择另一轮历史测评。系统按题目与GT配对，说明改善、退步和不可比范围；另一轮缺少有效报告时，会先自动生成。</p>
-              <ComparisonPicker runId={runId} value={otherRun} onChange={setOtherRun} disabled={pending || !!preparingOther || activeAnalysis(compare)} />
-              <div className="analysis-toolbar">
-                <button className="btn compact" disabled={pending || !!job?.stale || !otherRun || !!preparingOther || activeAnalysis(compare)} onClick={() => void compareRuns()}>创建对比报告</button>
-                {preparingOther && <><span role="status">正在准备所选运行的规则报告：{status[preparingOther.status] || preparingOther.status}，完成后自动对比。</span><button className="btn compact" onClick={() => setPreparingOther(null)}>停止等待</button></>}
               </div>
             </>
           )}

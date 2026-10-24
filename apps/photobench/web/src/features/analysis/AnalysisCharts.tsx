@@ -93,7 +93,7 @@ export function AnalysisCharts({ report: r, filter }: {
     series: scores.map(s => ({
       name: s.label, type: "bar", stack: "scores", label: { show: true, formatter: "{c}" },
       data: rows.map(x => ({ name: JSON.stringify([x.value, s.value]),
-        value: ratio ? Number((Number(x[`score_${s.value}`] || 0) / Math.max(1, x.total) * 100).toFixed(1)) : Number(x[`score_${s.value}`] || 0) })),
+        value: ratio ? Number((Number(x[`score_${s.value}`] || 0) / Math.max(1, x.total) * 100).toFixed(1)) : Number(x[`score_${s.value}`] || 0), label: { show: Number(x[`score_${s.value}`] || 0) > 0, formatter: ratio ? "{c}%" : "{c}" } })),
     })),
   };
   const errorOption: EChartsOption = {

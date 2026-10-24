@@ -151,3 +151,6 @@
 .analysis-run-picker select { max-width: min(660px, 80vw); }
 .analysis-run-picker small { flex-basis: 100%; color: #60758a; }
 @media (max-width: 900px) { .analysis-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.analysis-extra-filters { flex-basis: 100%; background: #f6f8fa; border: 1px solid #e0e6eb; border-radius: 6px; padding: 3px 8px; }
+.analysis-extra-filters > summary { font-size: 13px; color: #405c73; }
+.analysis-extra-filters .analysis-toolbar { margin: 6px 0; }

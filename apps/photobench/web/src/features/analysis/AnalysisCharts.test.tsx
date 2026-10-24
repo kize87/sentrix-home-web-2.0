@@ -80,6 +80,9 @@ it("默认任务类型展示正确/部分/错误/未评分，点击类别与分�
   expect(screen.getByText("事件总结")).toBeTruthy();
   expect(screen.getByText("统计枚举")).toBeTruthy();
   expect(screen.getByText("未覆盖 / 0题")).toBeTruthy();
+  const distribution = chart.setOption.mock.calls.find(([option]) => option.series?.[0]?.stack === "scores")?.[0];
+  expect(distribution.series[0].data[0].label.show).toBe(true);
+  expect(distribution.series[0].data[1].label.show).toBe(false);
   fireEvent.click(screen.getByLabelText("事件总结 答对（2分）"));
   expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({task_type: "T5_event_summary", score: "2", code: ""}));
   fireEvent.change(screen.getByLabelText("分布分组方式"), {target: {value: "angle"}});
