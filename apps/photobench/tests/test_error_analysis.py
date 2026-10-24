@@ -568,7 +568,7 @@ def test_task_aliases_merge_before_counting_and_filters_exports_share_the_catego
     cases = [case_from_item(row, i) for i, row in enumerate(raw)]
     r = report(cases)
     assert raw == before
-    assert r["rule_version"] == 5
+    assert r["rule_version"] == 6
     media, behavior = r["groups"]["content_type"]
     assert media == {
         "value": "T1_retrieve_media",

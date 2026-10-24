@@ -263,3 +263,25 @@ def test_legacy_single_turn_rejudge_keeps_saved_item_reference(tmp_path, monkeyp
     suites.start_rejudge("run-1", {"system_prompt": "test"})
     assert _wait_until(lambda: state["rejudge"]["status"] == "completed")
     assert seen == ["a.jpg"]
+
+
+def test_real_execution_records_single_turn_labels_and_reference():
+    from fakes_execution import FakeSentrixClient
+    from test_run_execution import _completed_turn
+
+    row = {**annotated(), "qa_id": "q", "question": "where", "answer": "saved place"}
+    execution, *_ = _execution(client=FakeSentrixClient(turns={"turn_1": [_completed_turn()]}))
+    result = execution._evaluate_one(row, "scope", {}, _request())
+    turn = result["runtime_turns"][0]
+    assert turn["reference_answer"] == "saved place"
+    for key in annotated():
+        assert turn[key] == row[key]
+
+
+def test_single_saved_turn_can_use_saved_item_labels_but_multiple_turns_cannot():
+    data = item(**annotated(), runtime_turns=[{"judge": {"score": 2}}])
+    single = case_from_item(data, 0)
+    assert single["turns"][0]["content_subtype"] == ["fact_place"]
+    data["runtime_turns"] *= 2
+    multi = case_from_item(data, 0)
+    assert all(t["content_subtype"] == ["unknown"] for t in multi["turns"])

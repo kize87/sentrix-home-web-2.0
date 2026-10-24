@@ -1938,6 +1938,8 @@ class RunExecution:
                 turn_definition = (
                     conversation[turn_index]
                     if turn_index < len(conversation) and isinstance(conversation[turn_index], dict)
+                    else row
+                    if not conversation
                     else {}
                 )
                 self._cancel_wait(0)
@@ -1971,7 +1973,11 @@ class RunExecution:
                         # 的定义取，单轮题退回行级。
                         "expected_action": turn_definition.get("expected_action")
                         or row.get("expected_action"),
-                        "reference_answer": str(turn_definition.get("reference_answer") or ""),
+                        "reference_answer": str(
+                            turn_definition.get("reference_answer")
+                            or (turn_definition.get("answer") if not conversation else "")
+                            or ""
+                        ),
                         "agent_status": polled.get("status"),
                         # **本轮实际交出去的图**。名字叫 ``predicted_images`` 是为了与 1.0
                         # 的 ``runtime_turns[i].predicted_images`` 对齐——``JudgeRunner.

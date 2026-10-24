@@ -17,7 +17,7 @@ from photobench.domain.error_analysis.taxonomy import (
 )
 from photobench.domain.runs.analysis import judge_score_for_summary
 
-RULE_VERSION = 5
+RULE_VERSION = 6
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -280,16 +280,17 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
             item.get("expected_action") if len(turns) == 1 else None
         )
         mixed_valid = expected != "answer_and_refuse" or task.get("behavior_rule_version") == 2
-        turn_content = content_types(saved_labels(turn_record.get("task_type")))
+        annotation = {**item, **turn_record} if len(turns) == 1 else turn_record
+        turn_content = content_types(saved_labels(annotation.get("task_type")))
         turn_subtype = content_subtypes(
-            str(turn_record.get("task_type")), str(turn_record.get("question_type"))
+            str(annotation.get("task_type")), str(annotation.get("question_type"))
         )
         turn_rows.append(
             {
                 "content_type": turn_content,
                 "content_subtype": turn_subtype,
-                "difficulty": saved_labels(turn_record.get("difficulty")),
-                "answerability": saved_labels(turn_record.get("answerability")),
+                "difficulty": saved_labels(annotation.get("difficulty")),
+                "answerability": saved_labels(annotation.get("answerability")),
                 "turn": ti,
                 "turn_id": turn_record.get("turn_id"),
                 "termination_reason": reason,
