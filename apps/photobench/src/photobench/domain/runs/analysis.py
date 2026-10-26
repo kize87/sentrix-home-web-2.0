@@ -371,9 +371,35 @@ def ranking_from_item(item: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def retrieval_metric_eligible(item: dict[str, Any]) -> bool:
+def retrieval_metric_eligible(item: Mapping[str, Any]) -> bool:
     """1.0 ``:1360``。不可回答的题目不进检索指标的分母。"""
-    return str(item.get("answerability") or "").strip().lower() != "unanswerable"
+    return str(item.get("answerability") or "").strip().lower() not in {
+        "unanswerable",
+        "insufficient_evidence",
+    }
+
+
+def retrieval_metric_projection(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep refusal metrics inapplicable while retaining recorded media and traces."""
+    if retrieval_metric_eligible(item):
+        return {"retrieval_metrics_applicable": True}
+    return {
+        "retrieval_metrics_applicable": False,
+        "retrieval_metrics_reason": "unanswerable",
+        **{
+            f"{prefix}_{metric}": None
+            for prefix in (
+                "retrieval",
+                "media_retrieval",
+                "image_retrieval",
+                "video_retrieval",
+                "candidate_retrieval",
+            )
+            for metric in ("precision", "recall", "f1")
+        },
+        **{f"{prefix}_retrieval_counts": None for prefix in ("media", "image", "video", "candidate")},
+        "image_ranking": {},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +552,7 @@ def derive_attribution(item: dict[str, Any]) -> dict[str, Any]:
     guard = item.get("guard_debug") or {}
     layers = {key: "na" for key in ("R", "V", "O", "T", "S", "G", "J")}
     details = {}
-    if isinstance(layer_recall, (int, float)):
+    if retrieval_metric_eligible(item) and isinstance(layer_recall, (int, float)):
         layers["R"] = "pass" if layer_recall >= 1 else "fail"
         label = "检索召回率" if source == "candidate" else "召回率（交付口径，无候选集）"
         details["R"] = f"{label} {layer_recall:.1%}"
@@ -1440,7 +1466,15 @@ def list_summary(state: dict[str, Any]) -> dict[str, Any]:
     for key, value in capability_summary(items, state.get("phases") or {}).items():
         if (
             key == "retrieval_recall_mean"
-            or key.startswith(("retrieval_", "media_retrieval_", "image_retrieval_", "video_retrieval_"))
+            or key.startswith(
+                (
+                    "retrieval_",
+                    "media_retrieval_",
+                    "image_retrieval_",
+                    "video_retrieval_",
+                    "candidate_retrieval_",
+                )
+            )
             or saved.get(key) is None
         ):
             saved[key] = value
@@ -1484,7 +1518,7 @@ def effective_summary(state: dict[str, Any]) -> dict[str, Any]:
     """
     saved = dict(state.get("summary") or {})
     items = state.get("items") or []
-    if not saved.get("image_ranking"):
+    if not saved.get("image_ranking") or any(not retrieval_metric_eligible(item) for item in items):
         saved["image_ranking"] = (
             mean_ranking_metrics(
                 [
@@ -1598,7 +1632,15 @@ def effective_summary(state: dict[str, Any]) -> dict[str, Any]:
     for key, value in capability_summary(items, state.get("phases") or {}).items():
         if (
             key == "retrieval_recall_mean"
-            or key.startswith(("retrieval_", "media_retrieval_", "image_retrieval_", "video_retrieval_"))
+            or key.startswith(
+                (
+                    "retrieval_",
+                    "media_retrieval_",
+                    "image_retrieval_",
+                    "video_retrieval_",
+                    "candidate_retrieval_",
+                )
+            )
             or key.startswith(
                 (
                     "json_parse_",
@@ -1700,6 +1742,7 @@ def run_list_entry(state: dict[str, Any]) -> dict[str, Any]:
 
 def item_summary(item: dict[str, Any], index: int, review: dict[str, Any] | None = None) -> dict[str, Any]:
     """1.0 ``:6559`` 的 ``_item_summary``。"""
+    item = {**item, **retrieval_metric_projection(item)}
     judge = judge_projection(item.get("judge"))
     return {
         "index": index,
@@ -1711,6 +1754,8 @@ def item_summary(item: dict[str, Any], index: int, review: dict[str, Any] | None
         "angle": item.get("angle"),
         "difficulty": item.get("difficulty"),
         "answerability": item.get("answerability"),
+        "retrieval_metrics_applicable": item["retrieval_metrics_applicable"],
+        "retrieval_metrics_reason": item.get("retrieval_metrics_reason"),
         "retrieval_recall": item.get("retrieval_recall"),
         "retrieval_precision": item.get("retrieval_precision"),
         "retrieval_f1": item.get("retrieval_f1"),
@@ -1796,7 +1841,8 @@ def hydrate_qa_metadata(item: dict[str, Any], qa_metadata: dict[str, dict[str, A
             hydrated["retrieval_recall"] = recall
         if hydrated.get("retrieval_f1") is None:
             hydrated["retrieval_f1"] = f1
-    if not hydrated.get("attribution"):
+    hydrated.update(retrieval_metric_projection(hydrated))
+    if not hydrated.get("attribution") or not retrieval_metric_eligible(hydrated):
         hydrated["attribution"] = derive_attribution(hydrated)
     hydrated["tool_trace"] = bind_tool_calls_to_model_rounds(
         hydrated.get("tool_trace") or [],

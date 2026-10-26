@@ -261,9 +261,10 @@ def test_the_recall_layer_reads_the_candidate_set_when_there_is_one():
     assert "交付口径" in without["detail"]["R"]
 
 
-def test_capability_summary_excludes_unanswerable_questions_from_retrieval_metrics():
+@pytest.mark.parametrize("answerability", ["unanswerable", "insufficient_evidence"])
+def test_capability_summary_excludes_unanswerable_questions_from_retrieval_metrics(answerability):
     items = [
-        _item(answerability="unanswerable", retrieval_image_ids=["a.jpg"]),
+        _item(answerability=answerability, retrieval_image_ids=["a.jpg"]),
         _item(
             qa_id="q2",
             retrieval_image_ids=["a.jpg"],
@@ -486,3 +487,69 @@ def test_judge_summary_rejects_boolean_and_derives_explicit_string_without_chang
     old["reason"] = "judge_error: failed"
     old["judge_status"] = "failed"
     assert judge_score_for_summary(old) is None
+
+
+@pytest.mark.parametrize("answerability", ["unanswerable", " INSUFFICIENT_EVIDENCE "])
+def test_refusal_exclusion_covers_typed_candidate_ranking_and_read_projections(answerability):
+    import copy
+
+    refusal = _item(
+        answerability=answerability,
+        retrieval_media_refs=[{"media_type": "image", "media_id": "a.jpg"}],
+        retrieval_image_ids=["a.jpg"],
+        predicted_file_names=[],
+        retrieval_recall=0.0,
+        candidate_retrieval_recall=0.0,
+        media_retrieval_counts={"gt": 100, "predicted": 100, "matched": 0},
+        image_retrieval_counts={"gt": 100, "predicted": 100, "matched": 0},
+        video_retrieval_counts={"gt": 100, "predicted": 100, "matched": 0},
+        candidate_retrieval_counts={"gt": 100, "predicted": 100, "matched": 0},
+        image_ranking=analysis.ranking_metrics([], {("image", "a.jpg")}),
+    )
+    ordinary = _item(
+        qa_id="partial",
+        answerability="partially_answerable",
+        retrieval_media_refs=[{"media_type": "image", "media_id": "b.jpg"}],
+        **{
+            f"{prefix}_retrieval_counts": {"gt": 1, "predicted": 1, "matched": 1}
+            for prefix in ("media", "image", "video", "candidate")
+        },
+        image_ranking=analysis.ranking_metrics([("image", "b.jpg")], {("image", "b.jpg")}),
+    )
+    before = copy.deepcopy(refusal)
+    summary = analysis.capability_summary([refusal, ordinary])
+    assert summary["retrieval_excluded_unanswerable_count"] == 1
+    for prefix in ("media", "image", "video", "candidate"):
+        assert summary[f"{prefix}_retrieval_recall_micro"] == 1
+    assert summary["image_ranking"]["mrr"] == 1
+    assert summary["judge_valid_count"] == 2
+    assert analysis.capability_summary([refusal])["retrieval_recall_micro"] is None
+    assert analysis.capability_summary([refusal])["candidate_retrieval_recall_micro"] is None
+    hydrated = analysis.hydrate_qa_metadata(refusal, {})
+    assert hydrated["retrieval_metrics_applicable"] is False
+    assert hydrated["retrieval_recall"] is None
+    assert hydrated["candidate_retrieval_recall"] is None
+    assert hydrated["image_ranking"] == {}
+    assert hydrated["attribution"]["layers"]["R"] == "na"
+    assert analysis.item_summary(refusal, 0)["media_retrieval_recall"] is None
+    assert analysis.item_summary(refusal, 0)["retrieval_metrics_applicable"] is False
+    assert refusal == before
+
+
+@pytest.mark.parametrize("answerability", ["answerable", "partially_answerable", "not_applicable", ""])
+def test_retrieval_eligibility_preserves_other_questions(answerability):
+    assert analysis.retrieval_metric_eligible({"answerability": answerability})
+
+
+def test_recomputed_summary_drops_saved_refusal_candidate_and_ranking_values():
+    refusal = _item(
+        answerability="insufficient_evidence",
+        candidate_retrieval_counts={"gt": 1, "predicted": 1, "matched": 1},
+        image_ranking=analysis.ranking_metrics([("image", "a.jpg")], {("image", "a.jpg")}),
+    )
+    state = {
+        "items": [refusal],
+        "summary": {"candidate_retrieval_recall_micro": 1.0, "image_ranking": {"mrr": 1.0}},
+    }
+    assert analysis.effective_summary(state)["candidate_retrieval_recall_micro"] is None
+    assert analysis.effective_summary(state)["image_ranking"] is None

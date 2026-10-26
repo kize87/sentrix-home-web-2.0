@@ -73,6 +73,7 @@ from photobench.domain.runs.analysis import (
     media_key,
     now_iso,
     ranking_metrics,
+    retrieval_metric_projection,
 )
 from photobench.domain.runs.execution import (
     RunCancelledError,
@@ -156,6 +157,10 @@ PASSTHROUGH_FIELDS = (
     "expected_action",
     "answer_claims",
     "alternative_evidence_media_sets",
+    "hallucination_category",
+    "unknown_target",
+    "diagnostic_locator_media_refs",
+    "diagnostic_distractor_media_refs",
 )
 
 
@@ -2111,7 +2116,6 @@ class RunExecution:
                     "judge_status": "pending",
                 }
             )
-            item["attribution"] = derive_attribution(item)
             item["execution_status"] = "completed"
         except RunCancelledError:
             raise
@@ -2137,6 +2141,9 @@ class RunExecution:
                     "wall_clock_ms": round((time.perf_counter() - started) * 1000, 1),
                 }
             )
+        item.update(retrieval_metric_projection(item))
+        if item["execution_status"] == "completed":
+            item["attribution"] = derive_attribution(item)
         return item
 
     def refresh_cleanup(self) -> bool:

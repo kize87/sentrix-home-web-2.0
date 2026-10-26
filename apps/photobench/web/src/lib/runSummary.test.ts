@@ -146,3 +146,21 @@ it("build 的运行有效性为未适用，缺失样本不进入分位数", () =
   expect(effectiveRunSummary({ run_id: "build", mode: "build", qa_count: 0, items: [], summary: { run_valid: null } }).run_valid).toBeNull();
   expect(nearestRankPercentile([null, undefined, "", false, 10, 20], 0.5)).toBe(10);
 });
+
+it.each(["unanswerable", " INSUFFICIENT_EVIDENCE "])("%s 排除图视频指标，部分可答及拒答质量保留", (answerability) => {
+  const counts = { gt: 1, predicted: 1, matched: 1 };
+  const refusal = { answerability, retrieval_media_refs: [{ media_type: "image", media_id: "a.jpg" }], media_retrieval_counts: { gt: 100, predicted: 100, matched: 0 }, judge: { score: 2 } };
+  const partial = { answerability: "partially_answerable", retrieval_media_refs: [{ media_type: "image", media_id: "b.jpg" }], media_retrieval_counts: counts, image_retrieval_counts: counts, video_retrieval_counts: counts, judge: { score: 0 } };
+  const summary = effectiveRunSummary({ items: [refusal, partial] } as unknown as Run);
+  expect(summary.retrieval_excluded_unanswerable_count).toBe(1);
+  expect(summary.retrieval_recall_micro).toBe(1);
+  expect(summary.retrieval_recall_macro).toBe(1);
+  expect(summary.image_retrieval_recall_micro).toBe(1);
+  expect(summary.video_retrieval_recall_micro).toBe(1);
+  expect(summary.judge_valid_count).toBe(2);
+  expect(summary.answer_quality_mean).toBe(1);
+  const refusalOnly = effectiveRunSummary({ items: [refusal] } as unknown as Run);
+  expect(refusalOnly.retrieval_recall_micro).toBeNull();
+  expect(refusalOnly.retrieval_precision_micro).toBeNull();
+  expect(refusalOnly.retrieval_f1_micro).toBeNull();
+});

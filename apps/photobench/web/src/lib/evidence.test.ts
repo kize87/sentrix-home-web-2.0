@@ -197,3 +197,7 @@ describe("isDirectEvidence（1.0 :712-717）", () => {
 it("2.0 实际轮次与题面轮次合并，实际状态和回答优先", () => {
   expect(conversationTurns({ conversation: [{ message: "题面", expected_action: "answer" }], runtime_turns: [{ message: "实际", turn_status: "complete", answer: "已有回答" }] })).toEqual([{ message: "实际", expected_action: "answer", turn_status: "complete", answer: "已有回答" }]);
 });
+
+it.each(["unanswerable", " INSUFFICIENT_EVIDENCE "])("%s 带历史GT和零分仍显示不适用", (answerability) => {
+  expect(itemRetrievalMetrics({ answerability, retrieval_image_ids: ["a.jpg"], retrieval_recall: 0 })).toBe("不适用：不可回答题不计入检索指标");
+});

@@ -18,6 +18,7 @@
 
 import { mediaRefs } from "../api/media.ts";
 import { average as averageMetric } from "./format.ts";
+import { retrievalMetricEligible } from "./retrieval.ts";
 import { itemCallMetrics, itemLlmSummary } from "./trace.ts";
 import type { ItemLlmSummary } from "./trace.ts";
 import type { Run, RunSummary } from "../api/types.ts";
@@ -74,7 +75,7 @@ export function macroMetrics(items: readonly Loose[], prefix: string): Retrieval
 export function effectiveRunSummary(run: Run | null | undefined): RunSummary {
   const saved = (run?.summary || {}) as Loose;
   const items = (run?.items || []) as unknown as Loose[];
-  const metricItems = items.filter((item) => String(item?.answerability || "").toLowerCase() !== "unanswerable");
+  const metricItems = items.filter(retrievalMetricEligible);
   const judged = items.filter((item) => typeof item.judge?.score === "number" && [0, 1, 2].includes(item.judge.score) && item.judge?.consistency_status !== "inconsistent");
   const recalls = metricItems.map((item) => item.retrieval_recall).filter((value) => Number.isFinite(Number(value)));
   const scores = judged.map((item) => item.judge.score as number);

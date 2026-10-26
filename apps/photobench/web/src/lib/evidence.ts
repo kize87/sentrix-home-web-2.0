@@ -26,6 +26,7 @@
 import { albumLocalUrl, decorateMedia, inferMediaType, mediaKey, mediaRefs } from "../api/media.ts";
 import type { MediaLike } from "../api/media.ts";
 import { finiteMetric, fmtPct } from "./format.ts";
+import { retrievalMetricEligible } from "./retrieval.ts";
 import type { ConversationTurn } from "../api/types.ts";
 
 type Dict = Record<string, unknown>;
@@ -43,6 +44,7 @@ function list<T>(value: unknown): T[] {
 
 /** 1.0 `:566-574`。无标准媒体直接给说明；是否带 `retrieval_media_refs` 决定「历史图片口径」。 */
 export function itemRetrievalMetrics(item: MediaLike | null | undefined): string {
+  if (!retrievalMetricEligible(item)) return "不适用：不可回答题不计入检索指标";
   if (!mediaRefs(item).length) return "本题无标准媒体，不计入检索指标";
   const total = `总媒体 P ${fmtPct(item?.media_retrieval_precision ?? item?.retrieval_precision)} · R ${fmtPct(item?.media_retrieval_recall ?? item?.retrieval_recall)} · F1 ${fmtPct(item?.media_retrieval_f1 ?? item?.retrieval_f1)}`;
   if (!Object.prototype.hasOwnProperty.call(item || {}, "retrieval_media_refs")) return `${total} · 历史图片口径`;

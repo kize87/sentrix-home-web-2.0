@@ -2,6 +2,11 @@
 
 本契约是 T006 指标正确性修复的兼容性基线；不补齐 vLLM 专项指标。
 
+## 2026-10-27 不可回答题的媒体指标
+
+`answerability=insufficient_evidence` 与旧值 `unanswerable` 均排除在普通媒体交付、候选检索、图片/视频、micro/macro 和排名指标的分母之外；拒答质量评分继续统计。部分可回答题保留原指标资格。
+新执行结果及历史逐题只读投影使用 `retrieval_metrics_applicable=false`、`retrieval_metrics_reason=unanswerable`，各项 P/R/F1 为 null，排名与计数指标不适用。界面显示“不适用”，导出保持 null；记录的 GT、实际候选、交付媒体和工具轨迹保留，定位诊断引用不作为答案 GT。历史原始文件及快照不重写；已冻结的历史汇总不批量重生成。
+
 ## 2026-10-22 采样与分量观测补充（memory_observation_version=1）
 
 新增可选 `memory_observations`（来源ID到观测事实）、`memory_dependencies`（指标到必要来源ID列表）、

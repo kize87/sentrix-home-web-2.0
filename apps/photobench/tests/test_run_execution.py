@@ -1604,3 +1604,38 @@ def test_judge_failure_is_committed_to_raw_metadata_and_list_without_filling_sco
     assert raw["items"][0]["judge"]["score"] is None
     assert raw["phases"]["qa_eval"]["error_details"][0]["error_type"] == "judge_error"
     assert entry["summary"]["judge_valid_count"] == metadata["summary"]["judge_valid_count"] == 0
+
+
+@pytest.mark.parametrize("answerability", ["unanswerable", "insufficient_evidence"])
+@pytest.mark.parametrize("failed", [False, True])
+def test_refusal_execution_keeps_media_facts_and_marks_metrics_inapplicable(
+    answerability, failed, monkeypatch
+):
+    row = {
+        **_rows()[0],
+        "answerability": answerability,
+        "expected_action": "refuse",
+        "diagnostic_locator_media_refs": [{"media_type": "image", "media_id": "locator.jpg"}],
+    }
+    execution, *_ = _execution()
+    if failed:
+
+        def fail(**kwargs):
+            raise TimeoutError("test timeout")
+
+        monkeypatch.setattr(execution.client, "start_conversation", fail)
+    item = execution._evaluate_one(row, "s", {}, _request())
+    assert item["execution_status"] == ("timeout" if failed else "completed")
+    assert item["retrieval_media_refs"] == [{"media_type": "image", "media_id": "a.jpg"}]
+    assert item["retrieval_metrics_applicable"] is False
+    assert item["diagnostic_locator_media_refs"] == row["diagnostic_locator_media_refs"]
+    for prefix in (
+        "retrieval",
+        "media_retrieval",
+        "image_retrieval",
+        "video_retrieval",
+        "candidate_retrieval",
+    ):
+        for metric in ("precision", "recall", "f1"):
+            assert item[f"{prefix}_{metric}"] is None
+    assert item["image_ranking"] == {}
