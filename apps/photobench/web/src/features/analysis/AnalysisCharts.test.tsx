@@ -222,3 +222,46 @@ it("两级题型下钻保留得分筛选，纯安全和待核排除占比，轮�
   fireEvent.click(screen.getByRole("button", {name: "时间 满分（2分）案例"}));
   expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({content_subtype: "fact_time", score: "2", content_unit: "turn"}));
 });
+
+it("新版能力分布按题去重；二级下钻的分母不重复累加同题多个标签", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const filter = vi.fn();
+  const report = { rule_version: 7, item_count: 3,
+    denominators: {turns: 3, turn_quality_valid: 0, behavior_valid: 0, behavior_missing: 3},
+    counts: {score_2: 3, qa_ability_score_2: 2, qa_ability_family_P_score_2: 2},
+    groups: {ability_family: [{value: "P", total: 2, score_2: 2}, {value: "not_applicable", total: 1, score_2: 1}],
+      ability_type: [{value: "P1", total: 2, score_2: 2}, {value: "P3", total: 1, score_2: 1}],
+      content_type: []}, errors: [], heatmap: [], behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  render(<AnalysisCharts report={report} filter={filter} />);
+  expect((screen.getByLabelText("分布分组方式") as HTMLSelectElement).value).toBe("ability_family");
+  fireEvent.click(screen.getByText("展开二级能力"));
+  fireEvent.change(screen.getByLabelText("分析一级能力"), {target: {value: "P"}});
+  fireEvent.click(screen.getByText("按得分看题型"));
+  fireEvent.change(screen.getByLabelText("分布显示方式"), {target: {value: "ratio"}});
+  const option = chart.setOption.mock.calls.map(([x]) => x).reverse().find(x => x.series?.[0]?.data?.some((d: {name?: string}) => d.name === "P1"));
+  expect(option.series[0].data).toEqual([{name: "P1", value: 100}, {name: "P3", value: 50}]);
+  expect(screen.getByText(/各类占比合计可能超过100%/)).toBeTruthy();
+  const click = chart.on.mock.calls.at(-1)?.[1] as (event: {name: string; value: number}) => void;
+  act(() => click({name: "P1", value: 100}));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({ability_type: "P1", score: "2"}));
+});
+
+it("新版异常热力图使用一级能力并把点击传给同一能力筛选", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const filter = vi.fn();
+  const report = {rule_version: 7, item_count: 1, counts: {}, denominators: {turns: 1},
+    groups: {ability_family: [{value: "P", total: 1}], content_type: [{value: "unknown", total: 1}]},
+    errors: [{code: "request_timeout", label: "请求超时", affected_items: 1, events: 2}],
+    heatmap: [{content_type: "unknown", code: "request_timeout", count: 1}],
+    ability_heatmap: [{ability_family: "P", code: "request_timeout", count: 1}],
+    behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  render(<AnalysisCharts report={report} filter={filter} />);
+  expect(screen.getByText("一级能力与运行异常（按题）")).toBeTruthy();
+  const heat = chart.setOption.mock.calls[2]![0];
+  expect(heat.yAxis.data).toEqual(["信息获取与感知"]);
+  const click = chart.on.mock.calls[2]![1] as (e: {name: string; value: number[]}) => void;
+  act(() => click({name: "", value: [0, 0, 1]}));
+  expect(filter).toHaveBeenCalledWith(expect.objectContaining({ability_family: "P", content_type: "", code: "request_timeout", content_unit: "qa"}));
+});

@@ -1,4 +1,4 @@
-import { qaTaxonomy, subtypeParent } from "../../lib/qaTaxonomy.ts";
+import { qaTaxonomy, subtypeParent, abilityParent } from "../../lib/qaTaxonomy.ts";
 import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { EChartsOption } from "echarts";
@@ -62,7 +62,7 @@ export function AnalysisCharts({ report: r, filter }: {
   report: AnalysisReport;
   filter: (value: AnalysisFilters) => void;
 }) {
-  const [dimension, setDimension] = useState("content_type");
+  const [dimension, setDimension] = useState(r.rule_version >= 7 ? "ability_family" : "content_type");
   const [parent, setParent] = useState("");
   const [unit, setUnit] = useState("qa");
   const [ratio, setRatio] = useState(false);
@@ -70,24 +70,33 @@ export function AnalysisCharts({ report: r, filter }: {
   const [score, setScore] = useState("2");
   if (r.rule_version < 4) return <p>此报告使用旧分类口径，请重新生成分析以查看内容题型与回答行为。</p>;
   const selectedScore = scores.find(s => s.value === score)!;
-  const isContent = ["content_type", "content_subtype"].includes(dimension);
+  const isAbility = ["ability_family", "ability_type"].includes(dimension);
+  const isContent = isAbility || ["content_type", "content_subtype"].includes(dimension);
   const groups = unit === "turn" ? r.turn_groups || {} : r.groups;
   const allRows = groups[dimension] || [];
-  const rows = dimension === "content_subtype" && parent ? allRows.filter(row => subtypeParent[row.value] === parent) : allRows;
-  const scoreTotal = dimension === "content_subtype" && parent
-    ? rows.reduce((n, row) => n + Number(row[`score_${score}`] || 0), 0)
+  const child = ["content_subtype", "ability_type"].includes(dimension);
+  const parents = dimension === "ability_type" ? abilityParent : subtypeParent;
+  const rows = child && parent ? allRows.filter(row => parents[row.value] === parent) : allRows;
+  const unitKey = unit === "turn" ? "turn" : "qa";
+  const scoreTotal = child && parent
+    ? (isAbility ? r.counts[`${unitKey}_ability_family_${parent}_score_${score}`] || 0 : rows.reduce((n, row) => n + Number(row[`score_${score}`] || 0), 0))
     : r.counts[`${unit === "turn" ? "turn_" : ""}score_${score}`] || 0;
   const excluded = ["unknown", "not_applicable", "pending_review"];
   const missingType = isContent ? rows.filter(row => excluded.includes(row.value)).reduce((n, row) => n + Number(row[`score_${score}`] || 0), 0) : 0;
-  const scoreBase = scoreTotal - missingType;
+  const scoreBase = isAbility
+    ? (parent && child ? scoreTotal : r.counts[`${unitKey}_ability_score_${score}`] || 0)
+    : scoreTotal - missingType;
   const groupLabel = (value: string) => dimension === "content_type" && value === "unknown" ? "未标注内容题型" : displayLabel(value);
   const scoreRows = rows.filter(row => !isContent || !excluded.includes(row.value)).map(row => ({
     value: row.value, count: Number(row[`score_${score}`] || 0),
   })).filter(row => row.count > 0).sort((a, b) => b.count - a.count);
   const scoreOverlap = scoreRows.reduce((total, row) => total + row.count, 0) > scoreBase;
   const errors = r.errors;
-  const types = r.groups.content_type || [];
-  const qs = types.map(x => x.value);
+  const heatDimension = r.rule_version >= 7 ? "ability_family" : "content_type";
+  const heatRows = r.rule_version >= 7
+    ? (r.ability_heatmap || []).map(x => ({value: x.ability_family, code: x.code, count: x.count}))
+    : r.heatmap.map(x => ({value: x.content_type, code: x.code, count: x.count}));
+  const qs = (r.groups[heatDimension] || []).map(x => x.value);
   const es = errors.map(x => x.code);
   const actions = ["answer", "refuse", "clarify", "answer_and_refuse", "none", "unknown"];
   const selectGroup = (value: AnalysisFilters) => filter({
@@ -136,10 +145,10 @@ export function AnalysisCharts({ report: r, filter }: {
   };
   const heatmap: EChartsOption = {
     tooltip: {}, grid: { containLabel: true, bottom: 90, left: 10 },
-    visualMap: { min: 0, max: Math.max(1, ...r.heatmap.map(x => x.count)), orient: "horizontal", left: "center", bottom: 0 },
+    visualMap: { min: 0, max: Math.max(1, ...heatRows.map(x => x.count)), orient: "horizontal", left: "center", bottom: 0 },
     xAxis: { type: "category", data: errors.map(x => x.label), axisLabel: { rotate: 30 } },
-    yAxis: { type: "category", data: qs.map(v => v === "unknown" ? "未标注内容题型" : displayLabel(v)) },
-    series: [{ type: "heatmap", label: { show: true }, data: r.heatmap.map(x => [es.indexOf(x.code), qs.indexOf(x.content_type), x.count]) }],
+    yAxis: { type: "category", data: qs.map(v => v === "unknown" && heatDimension === "content_type" ? "未标注内容题型" : displayLabel(v)) },
+    series: [{ type: "heatmap", label: { show: true }, data: heatRows.map(x => [es.indexOf(x.code), qs.indexOf(x.value), x.count]) }],
   };
   const matrix: EChartsOption = {
     tooltip: {}, grid: { containLabel: true, bottom: 55 },
@@ -151,31 +160,35 @@ export function AnalysisCharts({ report: r, filter }: {
   return <>
     <article className="analysis-distribution">
       <h4>任务完成质量 · 按内容与题目属性分组</h4>
-      <p>{unit === "turn" ? "按轮统计；点击后展示对应题目，同题多轮只列一次。" : "按题统计，多轮题采用最终任务与最终得分。"}</p>
+      <p>{unit === "turn" ? "按轮统计；点击后展示对应题目，同题多轮只列一次。" : "按题统计；能力取回答轮并集，旧内容题型采用最终任务，得分仍为题级最终分。"}</p>
       <div className="analysis-toolbar" role="group" aria-label="统计角度">
         <button className="btn compact" aria-pressed={perspective === "category"} onClick={() => setPerspective("category")}>按题型看得分</button>
         <button className="btn compact" aria-pressed={perspective === "score"} onClick={() => setPerspective("score")}>按得分看题型</button>
       </div>
       <div className="analysis-toolbar">
-        {r.rule_version >= 5 && <label>统计单位<select aria-label="内容统计单位" value={unit} onChange={e => { setUnit(e.target.value); setDimension("content_type"); setParent(""); }}>
-          <option value="qa">题（最终任务）</option><option value="turn">对话轮</option>
+        {r.rule_version >= 5 && <label>统计单位<select aria-label="内容统计单位" value={unit} onChange={e => { setUnit(e.target.value); setDimension(r.rule_version >= 7 ? "ability_family" : "content_type"); setParent(""); }}>
+          <option value="qa">题</option><option value="turn">对话轮</option>
         </select></label>}
         {perspective === "score" && <label>得分<select aria-label="分布得分" value={score} onChange={e => setScore(e.target.value)}>
           {scores.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select></label>}
         <label>分组方式<select aria-label="分布分组方式" value={dimension} onChange={e => { setDimension(e.target.value); setParent(""); }}>
-          {Object.entries(dimensions).filter(([key]) => unit !== "turn" || ["content_type", "content_subtype", "difficulty", "answerability"].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          {Object.entries(dimensions).filter(([key]) => r.rule_version >= 7 || !["ability_family", "ability_type", "benchmark_group"].includes(key)).filter(([key]) => unit !== "turn" || ["ability_family", "ability_type", "benchmark_group", "content_type", "content_subtype", "difficulty", "answerability"].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select></label>
         {dimension === "content_subtype" && <label>内容大类<select aria-label="分析内容大类" value={parent} onChange={e => setParent(e.target.value)}>
           <option value="">全部大类</option>{Object.entries(qaTaxonomy.tasks).map(([key, task]) => <option key={key} value={key}>{task.label}</option>)}
         </select></label>}
+        {dimension === "ability_type" && <label>一级能力<select aria-label="分析一级能力" value={parent} onChange={e => setParent(e.target.value)}>
+          <option value="">全部能力</option>{Object.entries(qaTaxonomy.abilities.families).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </select></label>}
+        {dimension === "ability_family" && <button className="btn compact" onClick={() => setDimension("ability_type")}>展开二级能力</button>}
         {dimension === "content_type" && r.rule_version >= 5 && <button className="btn compact" onClick={() => setDimension("content_subtype")}>展开细分题型</button>}
         <label>显示方式<select aria-label="分布显示方式" value={ratio ? "ratio" : "count"} onChange={e => setRatio(e.target.value === "ratio")}>
           <option value="count">{unit === "turn" ? "轮数" : "题数"}</option><option value="ratio">{perspective === "score" ? (isContent ? "有效题型占比" : "占该得分全部题目") : "组内占比"}</option>
         </select></label>
       </div>
       {perspective === "score" ? <>
-        <p>{selectedScore.label} · 共{scoreTotal}{unit === "turn" ? "轮" : "题"}{isContent && <> · 有效题型 {scoreBase} · 排除 {missingType}</>}</p>
+        <p>{selectedScore.label} · 共{scoreTotal}{unit === "turn" ? "轮" : "题"}{isContent && <> · 有效题型 {scoreBase} · 排除 {isAbility ? scoreTotal - scoreBase : missingType}</>}</p>
         {isContent && rows.filter(row => excluded.includes(row.value) && Number(row[`score_${score}`] || 0) > 0).map(row => <button key={row.value} className="analysis-number" onClick={() => selectGroup({[dimension]: row.value, score})}>{groupLabel(row.value)} {row[`score_${score}`]}{unit === "turn" ? "轮" : "题"}</button>)}
         {scoreOverlap && <p className="analysis-hint">一题可属于多类，各类占比合计可能超过100%。</p>}
         {scoreRows.length ? <>
@@ -218,9 +231,9 @@ export function AnalysisCharts({ report: r, filter }: {
           {!errors.length && <p>未记录到运行异常。</p>}
           <AnalysisChart label="错误分布" option={errorOption} onClick={name => selectGroup({ code: errors.find(x => x.label === name)?.code || "", score: "" })} />
         </article>
-        <article><h4>内容题型与运行异常（按题）</h4><p>缺轨迹 {r.counts.missing_trace || 0}题。</p>
+        <article><h4>{r.rule_version >= 7 ? "一级能力与运行异常（按题）" : "内容题型与运行异常（按题）"}</h4><p>缺轨迹 {r.counts.missing_trace || 0}题。</p>
           <AnalysisChart label="题型错误热力图" option={heatmap} onClick={(_, value) => {
-            if (Array.isArray(value)) selectGroup({ code: es[Number(value[0])], content_type: qs[Number(value[1])], score: "", content_unit: "qa" });
+            if (Array.isArray(value)) selectGroup({ code: es[Number(value[0])], [heatDimension]: qs[Number(value[1])], score: "", content_unit: "qa" });
           }} />
         </article>
       </div>

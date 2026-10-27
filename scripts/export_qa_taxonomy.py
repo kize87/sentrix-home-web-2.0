@@ -21,11 +21,15 @@ def main() -> int:
     text += """export const taxonomyLabels: Record<string, string> = {
   ...Object.fromEntries(Object.entries(qaTaxonomy.tasks).map(([key, task]) => [key, task.label])),
   ...Object.assign({}, ...Object.values(qaTaxonomy.tasks).map(task => task.subtypes)),
+  ...qaTaxonomy.abilities.families, ...qaTaxonomy.abilities.types, ...qaTaxonomy.abilities.groups,
   ...qaTaxonomy.actions, ...qaTaxonomy.answerability, ...qaTaxonomy.difficulty, ...qaTaxonomy.special,
 };
 export const subtypeParent: Record<string, string> = Object.fromEntries(
   Object.entries(qaTaxonomy.tasks).flatMap(
     ([key, task]) => Object.keys(task.subtypes).map(sub => [sub, key])),
+);
+export const abilityParent: Record<string, string> = Object.fromEntries(
+  Object.keys(qaTaxonomy.abilities.types).map(key => [key, key[0]]),
 );
 export const taxonomyLabel = (value: unknown) => taxonomyLabels[String(value)] || String(value || "未记录");
 """

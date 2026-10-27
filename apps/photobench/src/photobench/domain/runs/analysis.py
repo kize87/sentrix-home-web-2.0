@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from photobench.domain.datasets.ability_taxonomy import ABILITY_FIELDS
 from photobench.domain.runs.judge import normalize_judge_score, parse_judge_json
 from photobench.domain.runtime.metrics import (
     apple_power,
@@ -1747,6 +1748,7 @@ def item_summary(item: dict[str, Any], index: int, review: dict[str, Any] | None
     return {
         "index": index,
         "qa_id": item.get("qa_id"),
+        **{key: item[key] for key in ABILITY_FIELDS if key in item},
         "question": item.get("question"),
         "task_type": item.get("task_type"),
         "question_type": item.get("question_type"),

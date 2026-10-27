@@ -23,6 +23,9 @@ export interface AnalysisTurn {
   behavior_correct: boolean | null;
   judge_reason: string;
   score: number | null;
+  ability_family?: string[];
+  ability_type?: string[];
+  benchmark_group?: string[];
   content_type?: string[];
   content_subtype?: string[];
   difficulty?: string[];
@@ -73,6 +76,7 @@ export interface AnalysisReport {
   behavior_groups?: BehaviorGroup[];
   behavior_scenarios?: BehaviorGroup[];
   heatmap: { content_type: string; code: string; count: number }[];
+  ability_heatmap?: { ability_family: string; code: string; count: number }[];
   behavior_matrix: { expected: string; actual: string; count: number }[];
   definitions: string[];
 }

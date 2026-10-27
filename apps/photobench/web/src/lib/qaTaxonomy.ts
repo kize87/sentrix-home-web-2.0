@@ -42,6 +42,37 @@ export const qaTaxonomy = {
       }
     }
   },
+  "supported_schema_versions": [
+    "2.0",
+    "3.0"
+  ],
+  "abilities": {
+    "version": "ability-2026.10.28-v1",
+    "families": {
+      "P": "信息获取与感知",
+      "R": "推理与计算",
+      "S": "归纳与总结"
+    },
+    "types": {
+      "P1": "记录定位与筛选",
+      "P2": "已记录信息读取",
+      "P3": "视觉内容识别",
+      "P4": "画面文字读取",
+      "R1": "计数与去重统计",
+      "R2": "数值运算",
+      "R3": "比较与排序",
+      "R4": "关系与时空推断",
+      "S1": "场景综合描述",
+      "S2": "单事件概括",
+      "S3": "跨事件归纳",
+      "S4": "过程与时间线整理"
+    },
+    "groups": {
+      "ordinary": "普通能力题",
+      "hallucination": "抗幻觉拒答",
+      "injection": "注入防护"
+    }
+  },
   "actions": {
     "answer": "回答",
     "clarify": "澄清",
@@ -68,10 +99,14 @@ export const qaTaxonomy = {
 export const taxonomyLabels: Record<string, string> = {
   ...Object.fromEntries(Object.entries(qaTaxonomy.tasks).map(([key, task]) => [key, task.label])),
   ...Object.assign({}, ...Object.values(qaTaxonomy.tasks).map(task => task.subtypes)),
+  ...qaTaxonomy.abilities.families, ...qaTaxonomy.abilities.types, ...qaTaxonomy.abilities.groups,
   ...qaTaxonomy.actions, ...qaTaxonomy.answerability, ...qaTaxonomy.difficulty, ...qaTaxonomy.special,
 };
 export const subtypeParent: Record<string, string> = Object.fromEntries(
   Object.entries(qaTaxonomy.tasks).flatMap(
     ([key, task]) => Object.keys(task.subtypes).map(sub => [sub, key])),
+);
+export const abilityParent: Record<string, string> = Object.fromEntries(
+  Object.keys(qaTaxonomy.abilities.types).map(key => [key, key[0]]),
 );
 export const taxonomyLabel = (value: unknown) => taxonomyLabels[String(value)] || String(value || "未记录");

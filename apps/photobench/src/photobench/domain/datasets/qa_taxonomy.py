@@ -7,6 +7,14 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from photobench.domain.datasets.ability_taxonomy import (
+    ABILITIES,
+    ABILITY_FAMILIES,
+    ABILITY_VERSION,
+    BENCHMARK_GROUPS,
+    validate_abilities,
+)
+
 TAXONOMY_VERSION = "1.0"
 QA_SCHEMA_VERSION = "2.0"
 TASKS: dict[str, dict[str, Any]] = {
@@ -63,6 +71,13 @@ def taxonomy_document() -> dict[str, Any]:
         "version": TAXONOMY_VERSION,
         "schema_version": QA_SCHEMA_VERSION,
         "tasks": TASKS,
+        "supported_schema_versions": ["2.0", "3.0"],
+        "abilities": {
+            "version": ABILITY_VERSION,
+            "families": ABILITY_FAMILIES,
+            "types": ABILITIES,
+            "groups": BENCHMARK_GROUPS,
+        },
         "actions": ACTIONS,
         "answerability": ANSWERABILITY,
         "difficulty": DIFFICULTY,
@@ -72,10 +87,17 @@ def taxonomy_document() -> dict[str, Any]:
 
 def validate_qa_annotations(row: dict[str, Any]) -> None:
     """Validate only explicitly versioned inputs; legacy labels retain their meaning."""
+    has_abilities = "ability_taxonomy_version" in row
+    if has_abilities:
+        validate_abilities(row)
     for record in [row, *(row.get("conversation") or [])]:
         task, subtype = record.get("task_type"), record.get("question_type")
         special = task in {"not_applicable", "pending_review"} and task == subtype
-        if not special and SUBTYPE_TASK.get(str(subtype)) != task:
+        if (
+            not (has_abilities and task is None and subtype is None)
+            and not special
+            and SUBTYPE_TASK.get(str(subtype)) != task
+        ):
             raise ValueError(f"invalid task/subtype for {row.get('qa_id')}: {task}/{subtype}")
         if record.get("expected_action") not in {*ACTIONS, "pending_review"}:
             raise ValueError(f"invalid expected_action for {row.get('qa_id')}")

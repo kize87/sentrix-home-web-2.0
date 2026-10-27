@@ -1,6 +1,7 @@
 import { taxonomyLabels } from "../../lib/qaTaxonomy.ts";
 /** Display the dataset's saved labels; never infer a missing classification. */
 export const dimensions: Record<string, string> = {
+  ability_family: "一级能力", ability_type: "二级能力", benchmark_group: "测试分组",
   content_type: "内容题型", content_subtype: "细分题型",
   difficulty: "难度", answerability: "可回答性", media_type: "媒体类型",
   conversation_type: "对话形式",

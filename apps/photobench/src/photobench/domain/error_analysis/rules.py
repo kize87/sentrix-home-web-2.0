@@ -8,6 +8,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from photobench.domain.datasets.ability_taxonomy import ABILITY_FIELDS, ability_dimensions
 from photobench.domain.error_analysis.taxonomy import (
     QUALITY_DIMENSIONS,
     category_value,
@@ -15,9 +16,9 @@ from photobench.domain.error_analysis.taxonomy import (
     content_types,
     scenarios,
 )
-from photobench.domain.runs.analysis import judge_score_for_summary
+from photobench.domain.runs.analysis import judge_score_for_summary, retrieval_metric_eligible
 
-RULE_VERSION = 6
+RULE_VERSION = 7
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -45,6 +46,9 @@ LABELS = {
     "execution_error": "任务执行异常",
 }
 DIMENSIONS = (
+    "ability_family",
+    "ability_type",
+    "benchmark_group",
     "question_type",
     "task_type",
     "content_type",
@@ -287,6 +291,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         )
         turn_rows.append(
             {
+                **ability_dimensions(annotation),
                 "content_type": turn_content,
                 "content_subtype": turn_subtype,
                 "difficulty": saved_labels(annotation.get("difficulty")),
@@ -431,6 +436,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         str(item.get("task_type")), str(item.get("question_type"))
     )
     dimension_labels["test_scenario"] = sorted({v for t in turn_rows for v in t["test_scenarios"]})
+    dimension_labels.update(ability_dimensions(item))
     dimensions = {k: " / ".join(values) for k, values in dimension_labels.items()}
     dimensions.update(
         media_type="mixed" if len(media) > 1 else next(iter(media), "unknown"),
@@ -440,7 +446,9 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
     retrieval = item.get("candidate_retrieval_counts") or {}
     delivery = item.get("media_retrieval_counts") or {}
     signals = []
-    content_applicable = dimension_labels["content_type"] != ["not_applicable"]
+    content_applicable = retrieval_metric_eligible(item) and dimension_labels["content_type"] != [
+        "not_applicable"
+    ]
     if not content_applicable:
         retrieval, delivery = {}, {}
     if retrieval.get("gt", 0) > 0:
@@ -461,7 +469,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         item.get(k) for k in ("retrieval_media_refs", "retrieval_image_ids", "retrieval_video_ids")
     ):
         missing.append("retrieval_gt")
-    if not item.get("question_type"):
+    if not item.get("question_type") and dimension_labels["ability_type"] == ["unknown"]:
         missing.append("question_type")
     if any(t["behavior_correct"] is None for t in turn_rows):
         missing.append("behavior")
@@ -537,6 +545,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                 "item": {
                     k: item.get(k)
                     for k in (
+                        *ABILITY_FIELDS,
                         "task_type",
                         "question_type",
                         "expected_action",
@@ -549,6 +558,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                     {
                         k: t.get(k)
                         for k in (
+                            *ABILITY_FIELDS,
                             "task_type",
                             "question_type",
                             "expected_action",
@@ -594,7 +604,16 @@ class Aggregator:
         self.counts: Counter[str] = Counter()
         self.groups: dict[str, dict[str, Counter[str]]] = {k: {} for k in QUALITY_DIMENSIONS}
         self.turn_groups: dict[str, dict[str, Counter[str]]] = {
-            k: {} for k in ("content_type", "content_subtype", "difficulty", "answerability")
+            k: {}
+            for k in (
+                "ability_family",
+                "ability_type",
+                "benchmark_group",
+                "content_type",
+                "content_subtype",
+                "difficulty",
+                "answerability",
+            )
         }
         self.annotation_hash = hashlib.sha256()
         self.behavior_groups: dict[str, Counter[str]] = {}
@@ -602,6 +621,7 @@ class Aggregator:
         self.errors: dict[str, Counter[str]] = {}
         self.matrix: Counter[tuple[str, str]] = Counter()
         self.heatmap: Counter[tuple[str, str]] = Counter()
+        self.ability_heatmap: Counter[tuple[str, str]] = Counter()
         self.gt_hash = hashlib.sha256()
         self.judge_definitions: set[str] = set()
         self.agent_limits: dict[str, dict[str, Any]] = {}
@@ -631,6 +651,15 @@ class Aggregator:
             self.counts["missing_" + m] += 1
         for signal in case["signals"]:
             self.counts[signal] += 1
+        for unit, record in [("qa", case["dimension_labels"]), *[("turn", t) for t in case["turns"]]]:
+            if record["ability_type"] not in (["unknown"], ["not_applicable"]):
+                self.counts[unit + "_ability_valid"] += 1
+                score = case["score"] if unit == "qa" else record["score"]
+                self.counts[unit + "_ability_score_" + str(score)] += 1
+            for family in record["ability_family"]:
+                if family not in {"unknown", "not_applicable"}:
+                    score = case["score"] if unit == "qa" else record["score"]
+                    self.counts[f"{unit}_ability_family_{family}_score_{score}"] += 1
         for dim in QUALITY_DIMENSIONS:
             values = case["dimension_labels"][dim]
             for value in sorted(set(values)):
@@ -647,6 +676,8 @@ class Aggregator:
             row["recovered_items"] += all(e["recovery"] == "recovered" for e in es)
             for value in set(case["dimension_labels"]["content_type"]):
                 self.heatmap[value, code] += 1
+            for value in set(case["dimension_labels"]["ability_family"]):
+                self.ability_heatmap[value, code] += 1
         if case["events"] and all(e["recovery"] == "recovered" for e in case["events"]):
             self.counts["fully_recovered_items"] += 1
         self.counts["events"] += len(case["events"])
@@ -700,6 +731,8 @@ class Aggregator:
             "counts": dict(self.counts),
             "denominators": {
                 "qa": self.total,
+                "ability_valid": self.counts["qa_ability_valid"],
+                "turn_ability_valid": self.counts["turn_ability_valid"],
                 "content_valid": sum(
                     c["total"]
                     for v, c in self.groups["content_type"].items()
@@ -735,8 +768,13 @@ class Aggregator:
                 {"expected": e, "actual": a, "count": n} for (e, a), n in self.matrix.items()
             ],
             "heatmap": [{"content_type": q, "code": c, "count": n} for (q, c), n in self.heatmap.items()],
+            "ability_heatmap": [
+                {"ability_family": q, "code": c, "count": n} for (q, c), n in self.ability_heatmap.items()
+            ],
             "definitions": [
-                "题级内容统计采用最终实质任务与最终得分；轮级内容使用该轮标签与得分，不从最终轮补标签。",
+                "能力标签按明确版本读取；题级是回答轮主能力并集，轮级采用本轮能力与得分。旧内容标签仍用原口径。",
+                "普通能力组与抗幻觉、注入防护单列；澄清轮与安全题能力不适用，辅助能力不计主能力分母。",
+                "能力占比分母按题或轮去重；多标签可以重叠，不以标签成员数充当题数；历史未记录不推断。",
                 "不适用、待核定、未记录题型单列，不进入有效内容题型的占比分母。",
                 "证据指纹与标签指纹分开保存；标签变化不会标成GT变化，标签不同不提供改善汇总。",
                 "内容类型仅取明确的内容任务标签；行为测试、预期动作、测试场景不作为内容类型。未标注内容类型不推断。",
@@ -758,6 +796,9 @@ def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
             for k, v in filters.items()
             if k
             in {
+                "ability_family",
+                "ability_type",
+                "benchmark_group",
                 "content_type",
                 "content_subtype",
                 "difficulty",
@@ -774,6 +815,9 @@ def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
         def turn_matches(turn: Mapping[str, Any]) -> bool:
             for key, value in turn_filters.items():
                 if key in {
+                    "ability_family",
+                    "ability_type",
+                    "benchmark_group",
                     "content_type",
                     "content_subtype",
                     "difficulty",

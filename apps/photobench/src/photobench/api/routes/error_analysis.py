@@ -87,6 +87,7 @@ class AnalysisReport(BaseModel):
     behavior_scenarios: list[BehaviorGroup] = Field(default_factory=list)
     behavior_matrix: list[dict[str, Any]]
     heatmap: list[dict[str, Any]]
+    ability_heatmap: list[dict[str, Any]] = Field(default_factory=list)
     definitions: list[str]
 
 
@@ -147,6 +148,9 @@ def filters(
     media_type: str = "",
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
+    ability_family: str = "",
+    ability_type: str = "",
+    benchmark_group: str = "",
     content_type: str = "",
     content_subtype: str = "",
     content_unit: Literal["", "qa", "turn"] = "",
@@ -168,6 +172,9 @@ def filters(
         "media_type": media_type,
         "conversation_type": conversation_type,
         "anomaly": anomaly,
+        "ability_family": ability_family,
+        "ability_type": ability_type,
+        "benchmark_group": benchmark_group,
         "content_type": content_type,
         "content_subtype": content_subtype,
         "content_unit": content_unit,
@@ -223,6 +230,9 @@ def cases(
     media_type: str = "",
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
+    ability_family: str = "",
+    ability_type: str = "",
+    benchmark_group: str = "",
     content_type: str = "",
     content_subtype: str = "",
     content_unit: Literal["", "qa", "turn"] = "",
@@ -246,6 +256,9 @@ def cases(
             media_type,
             conversation_type,
             anomaly,
+            ability_family,
+            ability_type,
+            benchmark_group,
             content_type,
             content_subtype,
             content_unit,
@@ -276,6 +289,9 @@ def export(
     media_type: str = "",
     conversation_type: str = "",
     anomaly: Literal["", "yes", "no"] = "",
+    ability_family: str = "",
+    ability_type: str = "",
+    benchmark_group: str = "",
     content_type: str = "",
     content_subtype: str = "",
     content_unit: Literal["", "qa", "turn"] = "",
@@ -300,6 +316,9 @@ def export(
             media_type,
             conversation_type,
             anomaly,
+            ability_family,
+            ability_type,
+            benchmark_group,
             content_type,
             content_subtype,
             content_unit,

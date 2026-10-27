@@ -197,6 +197,8 @@ function QaItemDetail({
   return (
     <>
       <div className="qa-meta-tags">
+        {detail.benchmark_group ? <span>{taxonomyLabel(detail.benchmark_group)}</span> : null}
+        {(detail.ability_primary_ids || []).map(id => <span key={id}>{taxonomyLabel(id[0])} · {taxonomyLabel(id)}</span>)}
         {detail.task_type ? <span>{taxonomyLabel(detail.task_type)}</span> : null}
         {detail.question_type ? <span>{taxonomyLabel(detail.question_type)}</span> : null}
         {detail.angle ? <span>{detail.angle}</span> : null}

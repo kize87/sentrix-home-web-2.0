@@ -918,6 +918,27 @@ paths:
           type: string
           default: ''
           title: Anomaly
+      - name: ability_family
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Ability Family
+      - name: ability_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Ability Type
+      - name: benchmark_group
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Benchmark Group
       - name: content_type
         in: query
         required: false
@@ -1101,6 +1122,27 @@ paths:
           type: string
           default: ''
           title: Anomaly
+      - name: ability_family
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Ability Family
+      - name: ability_type
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Ability Type
+      - name: benchmark_group
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Benchmark Group
       - name: content_type
         in: query
         required: false
@@ -1664,6 +1706,12 @@ components:
             type: object
           type: array
           title: Heatmap
+        ability_heatmap:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Ability Heatmap
         definitions:
           items:
             type: string
@@ -2479,6 +2527,40 @@ components:
           - type: string
           - type: 'null'
           title: Taxonomy Version
+        ability_taxonomy_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ability Taxonomy Version
+        ability_primary_ids:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Ability Primary Ids
+        ability_supporting_ids:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Ability Supporting Ids
+        benchmark_group:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Benchmark Group
+        dialogue_management:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dialogue Management
+        classification_content_sha256:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Classification Content Sha256
         dataset_version:
           anyOf:
           - type: string

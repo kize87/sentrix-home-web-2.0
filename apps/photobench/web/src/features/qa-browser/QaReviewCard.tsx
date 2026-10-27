@@ -89,6 +89,8 @@ export function QaReviewCard({ item, index, onOpenMedia }: QaReviewCardProps) {
         <div className="qa-review-index">{String(index + 1).padStart(2, "0")}</div>
         <div className="qa-review-title">
           <div className="qa-browser-meta">
+            {item.benchmark_group ? <span className="qa-type-tag">{taxonomyLabel(item.benchmark_group)}</span> : null}
+            {(item.ability_primary_ids || []).map(id => <span key={id} className="qa-type-tag">{taxonomyLabel(id[0])} · {taxonomyLabel(id)}</span>)}
             <span className={`qa-badge badge-${item.expected_action || "answer"}`}>
               {qaActionBadge(item.expected_action)}
             </span>

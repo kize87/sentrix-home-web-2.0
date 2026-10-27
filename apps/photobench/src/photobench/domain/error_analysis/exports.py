@@ -56,6 +56,10 @@ DISPLAY_LABELS.update(
 )
 for _section in ("actions", "answerability", "difficulty", "special"):
     DISPLAY_LABELS.update(_taxonomy[_section])
+DISPLAY_LABELS.update(_taxonomy["abilities"]["families"])
+DISPLAY_LABELS.update(_taxonomy["abilities"]["types"])
+DISPLAY_LABELS.update(_taxonomy["abilities"]["groups"])
+DISPLAY_LABELS.update(ability_family="一级能力", ability_type="二级能力", benchmark_group="测试分组")
 DISPLAY_LABELS["content_subtype"] = "细分题型"
 SCORE_LABELS = {"2": "满分（2分）", "1": "部分完成（1分）", "0": "未完成（0分）", "None": "未评分"}
 
@@ -121,6 +125,9 @@ def export_report(
                     "task_type",
                     "content_type",
                     "content_subtype",
+                    "ability_family",
+                    "ability_type",
+                    "benchmark_group",
                     "test_scenario",
                     "behavior_turns",
                     "angle",
@@ -140,6 +147,9 @@ def export_report(
                         c["dimensions"].get("task_type", "unknown"),
                         c["dimensions"].get("content_type", "unknown"),
                         c["dimensions"].get("content_subtype", "unknown"),
+                        c["dimensions"].get("ability_family", "unknown"),
+                        c["dimensions"].get("ability_type", "unknown"),
+                        c["dimensions"].get("benchmark_group", "unknown"),
                         c["dimensions"].get("test_scenario", "unknown"),
                         json.dumps(c["turns"], ensure_ascii=False),
                         c["dimensions"].get("angle", "unknown"),
@@ -238,7 +248,33 @@ def export_report(
                 if r["value"] not in {"unknown", "not_applicable", "pending_review"}
             ],
         )
-    body += "<h2>内容题型 × 运行异常</h2>" + _table(
+    if report["rule_version"] >= 7:
+        body += "<h2>按得分看能力（普通能力题，题或轮去重）</h2>"
+        prefix = "turn" if unit == "轮" else "qa"
+        for score, label in SCORE_LABELS.items():
+            valid = report["counts"].get(f"{prefix}_ability_score_{score}", 0)
+            body += f"<h3>{label}</h3><p>有效能力{valid}{unit}；多标签比例可超过100%。</p>"
+            body += _table(
+                ["能力", f"{unit}数", "占有效能力样本"],
+                [
+                    [
+                        DISPLAY_LABELS.get(r["value"], r["value"]),
+                        r.get("score_" + score, 0),
+                        f"{r.get('score_' + score, 0) / valid * 100:.1f}%" if valid else "未覆盖",
+                    ]
+                    for r in groups.get("ability_type", [])
+                    if r["value"] not in {"unknown", "not_applicable"}
+                ],
+            )
+    if report["rule_version"] >= 7:
+        body += "<h2>一级能力 × 运行异常（按题）</h2>" + _table(
+            ["一级能力", "类别（可重叠）", "受影响题数"],
+            [
+                [DISPLAY_LABELS.get(r["ability_family"], r["ability_family"]), r["code"], r["count"]]
+                for r in report.get("ability_heatmap", [])
+            ],
+        )
+    body += "<h2>原内容题型 × 运行异常</h2>" + _table(
         ["内容题型", "类别（可重叠）", "受影响题数"],
         [
             [

@@ -303,6 +303,10 @@ export interface RunItemSummary {
   index: number;
   qa_id?: string;
   question?: string;
+  ability_taxonomy_version?: string;
+  ability_primary_ids?: string[];
+  ability_supporting_ids?: string[];
+  benchmark_group?: string;
   task_type?: string;
   question_type?: string;
   tags?: string[];
@@ -610,6 +614,10 @@ export interface QaRow {
   answer?: string;
   tags?: string[];
   question_type?: string;
+  ability_taxonomy_version?: string;
+  ability_primary_ids?: string[];
+  ability_supporting_ids?: string[];
+  benchmark_group?: string;
   task_type?: string;
   angle?: string;
   difficulty?: string;

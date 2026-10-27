@@ -115,7 +115,9 @@ function CaseCard({
         />{" "}
         <span className={`analysis-outcome outcome-${c.score ?? "None"}`}>{scoreLabel(c.score)}</span>{" "}
         {c.question || c.qa_id || c.index}
-        <small>{c.qa_id} · {displayLabel(c.dimensions.content_subtype || "unknown")} · {(c.dimensions.content_type === "unknown" ? "未标注内容题型" : displayLabel(c.dimensions.content_type || "unknown"))} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
+        <small>{c.qa_id} · {c.dimensions.benchmark_group && c.dimensions.benchmark_group !== "unknown"
+          ? `${displayLabel(c.dimensions.benchmark_group)} · ${displayLabel(c.dimensions.ability_type || "unknown")}`
+          : `${displayLabel(c.dimensions.content_subtype || "unknown")} · ${c.dimensions.content_type === "unknown" ? "未标注内容题型" : displayLabel(c.dimensions.content_type || "unknown")}`} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
       </summary>
       <h5>问题</h5>
       <p>{c.question}</p>
@@ -446,6 +448,7 @@ export function ErrorAnalysisPanel({
                     ]),
                   ],
                 } : {};
+  const mainFilters = r && r.rule_version >= 7 ? ["score", "benchmark_group", "ability_family", "code"] : ["score", "content_type", "code"];
   const renderFilter = (key: string, label: string, values: string[][]) => (
                     <label key={key}>
                       {label}
@@ -636,10 +639,10 @@ export function ErrorAnalysisPanel({
               </details>
               <h3 ref={caseHeading} tabIndex={-1} className="analysis-case-heading">题目列表</h3>
               <div className="analysis-toolbar">
-                {Object.entries(filterOptions).filter(([key]) => ["score", "content_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}
+                {Object.entries(filterOptions).filter(([key]) => mainFilters.includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}
                 <details className="analysis-extra-filters">
-                  <summary>更多筛选{Object.entries(filters).filter(([key, value]) => value && !["score", "content_type", "code"].includes(key)).length > 0 ? " · 已设置" : ""}</summary>
-                  <div className="analysis-toolbar">{Object.entries(filterOptions).filter(([key]) => !["score", "content_type", "code"].includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}</div>
+                  <summary>更多筛选{Object.entries(filters).filter(([key, value]) => value && !mainFilters.includes(key)).length > 0 ? " · 已设置" : ""}</summary>
+                  <div className="analysis-toolbar">{Object.entries(filterOptions).filter(([key]) => !mainFilters.includes(key)).map(([key, [label, values]]) => renderFilter(key, label, values))}</div>
                 </details>
                 <button
                   className="btn compact"

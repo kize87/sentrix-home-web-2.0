@@ -137,6 +137,12 @@ class RunItemObservation(BaseModel):
     difficulty: str | None = None
     qa_schema_version: str | None = None
     taxonomy_version: str | None = None
+    ability_taxonomy_version: str | None = None
+    ability_primary_ids: list[str] | None = None
+    ability_supporting_ids: list[str] | None = None
+    benchmark_group: str | None = None
+    dialogue_management: str | None = None
+    classification_content_sha256: str | None = None
     dataset_version: str | None = None
     judge: JudgeObservation | None = None
 

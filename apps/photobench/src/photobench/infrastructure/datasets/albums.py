@@ -143,13 +143,18 @@ class JsonAlbumSource:
         except (OSError, json.JSONDecodeError) as exc:
             raise KeyError(f"{album_id}/{qa_set}") from exc
         definition = (manifest.get("qa_set_versions") or {}).get(qa_set) or {}
-        if definition.get("schema_version") == "2.0":
+        if definition.get("schema_version") in {"2.0", "3.0"}:
             ids = [row.get("qa_id") for row in rows]
             if not all(ids) or len(set(ids)) != len(rows):
                 raise ValueError("QA IDs must be present and unique")
             if definition.get("qa_sha256") != sha256_file(path):
                 raise ValueError("versioned QA file fingerprint mismatch")
             for row in rows:
+                if definition.get("schema_version") == "3.0" and (
+                    not row.get("ability_taxonomy_version")
+                    or row.get("ability_taxonomy_version") != definition.get("ability_taxonomy_version")
+                ):
+                    raise ValueError("ability version missing or inconsistent with manifest")
                 validate_qa_annotations(row)
         rows = apply_task_action_defaults(
             rows, str(manifest.get("album_id") or album_id), qa_set, self._policy

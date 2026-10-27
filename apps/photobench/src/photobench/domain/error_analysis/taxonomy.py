@@ -32,6 +32,9 @@ SCENARIOS = {
     "unanswerable_fact",
 }
 QUALITY_DIMENSIONS = (
+    "ability_family",
+    "ability_type",
+    "benchmark_group",
     "content_type",
     "content_subtype",
     "difficulty",
