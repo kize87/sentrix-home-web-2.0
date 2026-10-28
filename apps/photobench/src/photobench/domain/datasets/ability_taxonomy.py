@@ -1,13 +1,15 @@
-"""Explicit system abilities, independent of behavior and legacy task labels."""
+"""Versioned system abilities, independent of behavior and legacy task labels."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
-ABILITY_VERSION = "ability-2026.10.28-v1"
-ABILITY_FAMILIES = {"P": "信息获取与感知", "R": "推理与计算", "S": "归纳与总结"}
-ABILITIES = {
+LEGACY_ABILITY_VERSION = "ability-2026.10.28-v1"
+ABILITY_VERSION = "ability-2026.10.28-v2"
+LEGACY_FAMILIES = {"P": "信息获取与感知", "R": "推理与计算", "S": "归纳与总结"}
+ABILITY_FAMILIES = {**LEGACY_FAMILIES, "H": "抗幻觉", "I": "抗注入攻击"}
+LEGACY_ABILITIES = {
     "P1": "记录定位与筛选",
     "P2": "已记录信息读取",
     "P3": "视觉内容识别",
@@ -21,9 +23,30 @@ ABILITIES = {
     "S3": "跨事件归纳",
     "S4": "过程与时间线整理",
 }
+ABILITIES = {
+    "P1": "媒体定位与筛选",
+    "P2": "记录属性查询",
+    "P3": "视觉内容理解",
+    "P4": "画面文字识读",
+    "R1": "计数与去重统计",
+    "R2": "数值计算",
+    "R3": "比较与排序",
+    "R4": "关系与情境推断",
+    "S1": "场景综合描述",
+    "S2": "经历与过程总结",
+}
 BENCHMARK_GROUPS = {"ordinary": "普通能力题", "hallucination": "抗幻觉拒答", "injection": "注入防护"}
+ABILITY_VERSIONS = {
+    LEGACY_ABILITY_VERSION: {
+        "families": LEGACY_FAMILIES,
+        "types": LEGACY_ABILITIES,
+        "groups": BENCHMARK_GROUPS,
+    },
+    ABILITY_VERSION: {"families": ABILITY_FAMILIES, "types": ABILITIES, "groups": BENCHMARK_GROUPS},
+}
 ABILITY_FIELDS = (
     "ability_taxonomy_version",
+    "ability_family_ids",
     "ability_primary_ids",
     "ability_supporting_ids",
     "benchmark_group",
@@ -32,23 +55,46 @@ ABILITY_FIELDS = (
 )
 
 
+def family_ids(group: str, primary: list[str], action: Any = None) -> list[str]:
+    """V2 primary directions; special benchmarks deliberately have no subtypes."""
+    if group in {"hallucination", "injection"}:
+        return ["H" if group == "hallucination" else "I"]
+    return [] if action == "clarify" else sorted({v[0] for v in primary})
+
+
+def ability_labels(versions: Iterable[str]) -> dict[str, str]:
+    """Use saved versions, including explicit names when a report mixes versions."""
+    selected = sorted(set(versions) & ABILITY_VERSIONS.keys())
+    names: dict[str, list[tuple[str, str]]] = {}
+    for version in selected:
+        for section in ABILITY_VERSIONS[version].values():
+            for key, name in section.items():
+                names.setdefault(key, []).append((version.rsplit("-", 1)[-1], name))
+    return {
+        key: values[0][1] if len({v for _, v in values}) == 1 else "；".join(f"{v}：{n}" for v, n in values)
+        for key, values in names.items()
+    }
+
+
 def validate_abilities(row: Mapping[str, Any]) -> None:
     """Reject incomplete or contradictory versioned annotations at import time."""
-    group = row.get("benchmark_group")
+    version, group = row.get("ability_taxonomy_version"), row.get("benchmark_group")
+    if version not in ABILITY_VERSIONS:
+        raise ValueError("unsupported ability_taxonomy_version")
     if group not in BENCHMARK_GROUPS:
         raise ValueError("invalid benchmark_group")
+    catalog = ABILITY_VERSIONS[version]["types"]
     turns = row.get("conversation") or []
     for record in [row, *turns]:
-        if record.get("ability_taxonomy_version") != ABILITY_VERSION:
-            raise ValueError("unsupported ability_taxonomy_version")
+        if record.get("ability_taxonomy_version") != version:
+            raise ValueError("inconsistent ability_taxonomy_version")
         if record.get("benchmark_group") != group:
             raise ValueError("inconsistent benchmark_group")
-        primary = record.get("ability_primary_ids")
-        supporting = record.get("ability_supporting_ids", [])
+        primary, supporting = record.get("ability_primary_ids"), record.get("ability_supporting_ids", [])
         for values in (primary, supporting):
             if (
                 not isinstance(values, list)
-                or any(not isinstance(v, str) or v not in ABILITIES for v in values)
+                or any(not isinstance(v, str) or v not in catalog for v in values)
                 or len(set(values)) != len(values)
             ):
                 raise ValueError("invalid ability IDs")
@@ -60,6 +106,10 @@ def validate_abilities(row: Mapping[str, Any]) -> None:
             raise ValueError("clarification turn has primary abilities")
         if group == "ordinary" and record.get("expected_action") != "clarify" and not primary:
             raise ValueError("ordinary answer has no primary ability")
+        if version == ABILITY_VERSION:
+            expected = family_ids(str(group), primary, record.get("expected_action"))
+            if record.get("ability_family_ids") != expected:
+                raise ValueError("invalid ability_family_ids")
     if turns and set(row["ability_primary_ids"]) != {
         v for turn in turns for v in turn["ability_primary_ids"]
     }:
@@ -67,18 +117,30 @@ def validate_abilities(row: Mapping[str, Any]) -> None:
 
 
 def ability_dimensions(record: Mapping[str, Any]) -> dict[str, list[str]]:
-    """Project saved versioned facts only; missing history remains unknown."""
+    """Project saved facts only; missing history remains unknown, V1 stays V1."""
     unknown = {k: ["unknown"] for k in ("ability_family", "ability_type", "benchmark_group")}
-    if record.get("ability_taxonomy_version") != ABILITY_VERSION:
+    version = record.get("ability_taxonomy_version")
+    if version not in ABILITY_VERSIONS:
         return unknown
     group, primary = record.get("benchmark_group"), record.get("ability_primary_ids")
+    catalog = ABILITY_VERSIONS[version]["types"]
     if group not in BENCHMARK_GROUPS or not isinstance(primary, list):
         return unknown
-    if any(not isinstance(v, str) or v not in ABILITIES for v in primary):
+    if any(not isinstance(v, str) or v not in catalog for v in primary):
         return unknown
-    if group != "ordinary" or record.get("expected_action") == "clarify":
-        types = ["not_applicable"]
+    if version == ABILITY_VERSION:
+        families = family_ids(str(group), primary, record.get("expected_action"))
+        if record.get("ability_family_ids") != families:
+            return unknown
     else:
-        types = sorted(set(primary)) or ["unknown"]
-    families = sorted({v[0] for v in types if v in ABILITIES}) or types
-    return {"ability_family": families, "ability_type": types, "benchmark_group": [str(group)]}
+        families = sorted({v[0] for v in primary}) if group == "ordinary" else []
+    types = (sorted(set(primary)) or ["unknown"]) if group == "ordinary" else ["not_applicable"]
+    if record.get("expected_action") == "clarify":
+        types = ["not_applicable"]
+        if group == "ordinary":
+            families = []
+    return {
+        "ability_family": families or types,
+        "ability_type": types,
+        "benchmark_group": [str(group)],
+    }

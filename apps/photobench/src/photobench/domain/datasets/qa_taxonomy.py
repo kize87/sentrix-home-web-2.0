@@ -11,6 +11,7 @@ from photobench.domain.datasets.ability_taxonomy import (
     ABILITIES,
     ABILITY_FAMILIES,
     ABILITY_VERSION,
+    ABILITY_VERSIONS,
     BENCHMARK_GROUPS,
     validate_abilities,
 )
@@ -78,6 +79,7 @@ def taxonomy_document() -> dict[str, Any]:
             "types": ABILITIES,
             "groups": BENCHMARK_GROUPS,
         },
+        "ability_versions": ABILITY_VERSIONS,
         "actions": ACTIONS,
         "answerability": ANSWERABILITY,
         "difficulty": DIFFICULTY,

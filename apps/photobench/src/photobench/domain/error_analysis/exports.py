@@ -9,6 +9,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from photobench.domain.datasets.ability_taxonomy import LEGACY_ABILITY_VERSION, ability_labels
 from photobench.domain.datasets.qa_taxonomy import taxonomy_document
 from photobench.domain.error_analysis.taxonomy import QUALITY_DIMENSIONS
 
@@ -109,6 +110,13 @@ def _document(body: str) -> str:
 def export_report(
     report: dict[str, Any], cases: Sequence[dict[str, Any]], format: str, filters: Mapping[str, Any]
 ) -> str:
+    labels = {
+        **DISPLAY_LABELS,
+        **(
+            report.get("ability_labels")
+            or (ability_labels([LEGACY_ABILITY_VERSION]) if report.get("rule_version") == 7 else {})
+        ),
+    }
     if format == "json":
         return json.dumps(
             {"report": report, "filters": dict(filters), "cases": cases}, ensure_ascii=False, indent=2
@@ -136,6 +144,9 @@ def export_report(
                     "errors",
                     "answer",
                     "reference_answer",
+                    "ability_taxonomy_version",
+                    "ability_family_label",
+                    "ability_type_label",
                 ],
                 *[
                     [
@@ -158,6 +169,15 @@ def export_report(
                         ";".join(e["code"] for e in c["events"]),
                         c["answer"],
                         c["reference_answer"],
+                        c.get("ability_taxonomy_version"),
+                        " / ".join(
+                            c.get("ability_labels", labels).get(v, v)
+                            for v in c["dimensions"].get("ability_family", "unknown").split(" / ")
+                        ),
+                        " / ".join(
+                            c.get("ability_labels", labels).get(v, v)
+                            for v in c["dimensions"].get("ability_type", "unknown").split(" / ")
+                        ),
                     ]
                     for c in cases
                 ],
@@ -167,6 +187,7 @@ def export_report(
         raise ValueError("format must be html, json or csv")
     source = {
         "source": report["source"],
+        "ability_taxonomy_versions": report.get("ability_taxonomy_versions"),
         "rule_version": report["rule_version"],
         "generated_at": report.get("generated_at"),
         "gt_fingerprint": report["gt_fingerprint"],
@@ -203,12 +224,12 @@ def export_report(
     groups = report.get("turn_groups", {}) if unit == "轮" else report["groups"]
     for dim in QUALITY_DIMENSIONS:
         rows = groups.get(dim, [])
-        body += f"<h2>样本分布与表现：{_escape(DISPLAY_LABELS.get(dim, dim))}</h2>"
+        body += f"<h2>样本分布与表现：{_escape(labels.get(dim, dim))}</h2>"
         for row in rows:
             label = _escape(
                 "未标注内容题型"
                 if dim == "content_type" and row["value"] == "unknown"
-                else DISPLAY_LABELS.get(row["value"], row["value"])
+                else labels.get(row["value"], row["value"])
             )
             body += (
                 f"<p>{label} · 共{row['total']}{unit} · 未评分{row.get('score_None', 0)}</p>"
@@ -240,7 +261,7 @@ def export_report(
             ["内容题型", f"{unit}数", f"占有效内容{unit}的比例"],
             [
                 [
-                    DISPLAY_LABELS.get(r["value"], r["value"]),
+                    labels.get(r["value"], r["value"]),
                     r.get("score_" + score, 0),
                     f"{r.get('score_' + score, 0) / valid * 100:.1f}%" if valid else "未覆盖",
                 ]
@@ -249,28 +270,32 @@ def export_report(
             ],
         )
     if report["rule_version"] >= 7:
-        body += "<h2>按得分看能力（普通能力题，题或轮去重）</h2>"
         prefix = "turn" if unit == "轮" else "qa"
-        for score, label in SCORE_LABELS.items():
-            valid = report["counts"].get(f"{prefix}_ability_score_{score}", 0)
-            body += f"<h3>{label}</h3><p>有效能力{valid}{unit}；多标签比例可超过100%。</p>"
-            body += _table(
-                ["能力", f"{unit}数", "占有效能力样本"],
-                [
+        for dimension, title, denominator in (
+            ("ability_family", "一级能力", "ability_family" if report["rule_version"] >= 8 else "ability"),
+            ("ability_type", "普通二级能力", "ability"),
+        ):
+            body += f"<h2>按得分看{title}（题或轮去重）</h2>"
+            for score, label in SCORE_LABELS.items():
+                valid = report["counts"].get(f"{prefix}_{denominator}_score_{score}", 0)
+                body += f"<h3>{label}</h3><p>有效{valid}{unit}；多标签比例可超过100%。</p>"
+                body += _table(
+                    ["能力", f"{unit}数", "占有效能力样本"],
                     [
-                        DISPLAY_LABELS.get(r["value"], r["value"]),
-                        r.get("score_" + score, 0),
-                        f"{r.get('score_' + score, 0) / valid * 100:.1f}%" if valid else "未覆盖",
-                    ]
-                    for r in groups.get("ability_type", [])
-                    if r["value"] not in {"unknown", "not_applicable"}
-                ],
-            )
+                        [
+                            labels.get(r["value"], r["value"]),
+                            r.get("score_" + score, 0),
+                            f"{r.get('score_' + score, 0) / valid * 100:.1f}%" if valid else "未覆盖",
+                        ]
+                        for r in groups.get(dimension, [])
+                        if r["value"] not in {"unknown", "not_applicable"}
+                    ],
+                )
     if report["rule_version"] >= 7:
         body += "<h2>一级能力 × 运行异常（按题）</h2>" + _table(
             ["一级能力", "类别（可重叠）", "受影响题数"],
             [
-                [DISPLAY_LABELS.get(r["ability_family"], r["ability_family"]), r["code"], r["count"]]
+                [labels.get(r["ability_family"], r["ability_family"]), r["code"], r["count"]]
                 for r in report.get("ability_heatmap", [])
             ],
         )
@@ -278,7 +303,7 @@ def export_report(
         ["内容题型", "类别（可重叠）", "受影响题数"],
         [
             [
-                DISPLAY_LABELS.get(
+                labels.get(
                     r.get("content_type", r.get("question_type", "unknown")),
                     r.get("content_type", r.get("question_type", "unknown")),
                 ),
@@ -302,7 +327,7 @@ def export_report(
             ],
             [
                 [
-                    DISPLAY_LABELS.get(r["value"], r["value"]),
+                    labels.get(r["value"], r["value"]),
                     r["total"],
                     f"{r['total'] / report['denominators']['turns'] * 100:.1f}%"
                     if report["denominators"]["turns"] and key == "behavior_groups"
@@ -320,8 +345,8 @@ def export_report(
         ["预期", "实际", "轮数"],
         [
             [
-                DISPLAY_LABELS.get(r["expected"], r["expected"]),
-                DISPLAY_LABELS.get(r["actual"], r["actual"]),
+                labels.get(r["expected"], r["expected"]),
+                labels.get(r["actual"], r["actual"]),
                 r["count"],
             ]
             for r in report["behavior_matrix"]

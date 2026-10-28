@@ -1,4 +1,4 @@
-import { taxonomyLabel } from "../../lib/qaTaxonomy.ts";
+import { taxonomyLabel, abilityLabel } from "../../lib/qaTaxonomy.ts";
 /**
  * 单题卡（列表项 + 展开体）。移植 1.0 `App.vue:3460-3674`。
  *
@@ -197,8 +197,9 @@ function QaItemDetail({
   return (
     <>
       <div className="qa-meta-tags">
-        {detail.benchmark_group ? <span>{taxonomyLabel(detail.benchmark_group)}</span> : null}
-        {(detail.ability_primary_ids || []).map(id => <span key={id}>{taxonomyLabel(id[0])} · {taxonomyLabel(id)}</span>)}
+        {detail.benchmark_group && !detail.ability_family_ids?.some(id => id === "H" || id === "I") ? <span>{taxonomyLabel(detail.benchmark_group)}</span> : null}
+        {(detail.ability_family_ids || []).filter(id => id === "H" || id === "I").map(id => <span key={id}>{abilityLabel(id, detail.ability_taxonomy_version)}</span>)}
+        {(detail.ability_primary_ids || []).map(id => <span key={id}>{abilityLabel(id[0], detail.ability_taxonomy_version)} · {abilityLabel(id, detail.ability_taxonomy_version)}</span>)}
         {detail.task_type ? <span>{taxonomyLabel(detail.task_type)}</span> : null}
         {detail.question_type ? <span>{taxonomyLabel(detail.question_type)}</span> : null}
         {detail.angle ? <span>{detail.angle}</span> : null}

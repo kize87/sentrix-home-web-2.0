@@ -1,4 +1,4 @@
-import { taxonomyLabel } from "../../lib/qaTaxonomy.ts";
+import { taxonomyLabel, abilityLabel } from "../../lib/qaTaxonomy.ts";
 /**
  * 单条 QA 的审阅卡。逐行移植 1.0 `App.vue:3703-3761`：
  *
@@ -89,8 +89,9 @@ export function QaReviewCard({ item, index, onOpenMedia }: QaReviewCardProps) {
         <div className="qa-review-index">{String(index + 1).padStart(2, "0")}</div>
         <div className="qa-review-title">
           <div className="qa-browser-meta">
-            {item.benchmark_group ? <span className="qa-type-tag">{taxonomyLabel(item.benchmark_group)}</span> : null}
-            {(item.ability_primary_ids || []).map(id => <span key={id} className="qa-type-tag">{taxonomyLabel(id[0])} · {taxonomyLabel(id)}</span>)}
+            {item.benchmark_group && !item.ability_family_ids?.some(id => id === "H" || id === "I") ? <span className="qa-type-tag">{taxonomyLabel(item.benchmark_group)}</span> : null}
+            {(item.ability_family_ids || []).filter(id => id === "H" || id === "I").map(id => <span key={id}>{abilityLabel(id, item.ability_taxonomy_version)}</span>)}
+        {(item.ability_primary_ids || []).map(id => <span key={id} className="qa-type-tag">{abilityLabel(id[0], item.ability_taxonomy_version)} · {abilityLabel(id, item.ability_taxonomy_version)}</span>)}
             <span className={`qa-badge badge-${item.expected_action || "answer"}`}>
               {qaActionBadge(item.expected_action)}
             </span>

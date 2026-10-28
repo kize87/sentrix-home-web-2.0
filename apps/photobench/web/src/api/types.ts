@@ -304,6 +304,7 @@ export interface RunItemSummary {
   qa_id?: string;
   question?: string;
   ability_taxonomy_version?: string;
+  ability_family_ids?: string[];
   ability_primary_ids?: string[];
   ability_supporting_ids?: string[];
   benchmark_group?: string;
@@ -615,6 +616,7 @@ export interface QaRow {
   tags?: string[];
   question_type?: string;
   ability_taxonomy_version?: string;
+  ability_family_ids?: string[];
   ability_primary_ids?: string[];
   ability_supporting_ids?: string[];
   benchmark_group?: string;

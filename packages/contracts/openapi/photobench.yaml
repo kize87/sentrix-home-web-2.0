@@ -1644,6 +1644,16 @@ components:
         gt_fingerprint:
           type: string
           title: Gt Fingerprint
+        ability_taxonomy_versions:
+          items:
+            type: string
+          type: array
+          title: Ability Taxonomy Versions
+        ability_labels:
+          additionalProperties:
+            type: string
+          type: object
+          title: Ability Labels
         annotation_fingerprint:
           anyOf:
           - type: string
@@ -2532,6 +2542,13 @@ components:
           - type: string
           - type: 'null'
           title: Ability Taxonomy Version
+        ability_family_ids:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Ability Family Ids
         ability_primary_ids:
           anyOf:
           - items:

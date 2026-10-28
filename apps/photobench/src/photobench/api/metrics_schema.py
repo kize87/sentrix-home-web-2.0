@@ -138,6 +138,7 @@ class RunItemObservation(BaseModel):
     qa_schema_version: str | None = None
     taxonomy_version: str | None = None
     ability_taxonomy_version: str | None = None
+    ability_family_ids: list[str] | None = None
     ability_primary_ids: list[str] | None = None
     ability_supporting_ids: list[str] | None = None
     benchmark_group: str | None = None

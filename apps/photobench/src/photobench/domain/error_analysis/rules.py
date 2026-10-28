@@ -8,7 +8,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from photobench.domain.datasets.ability_taxonomy import ABILITY_FIELDS, ability_dimensions
+from photobench.domain.datasets.ability_taxonomy import ABILITY_FIELDS, ability_dimensions, ability_labels
 from photobench.domain.error_analysis.taxonomy import (
     QUALITY_DIMENSIONS,
     category_value,
@@ -18,7 +18,7 @@ from photobench.domain.error_analysis.taxonomy import (
 )
 from photobench.domain.runs.analysis import judge_score_for_summary, retrieval_metric_eligible
 
-RULE_VERSION = 7
+RULE_VERSION = 8
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -575,6 +575,8 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         "execution": status,
         "dimensions": dimensions,
         "dimension_labels": dimension_labels,
+        "ability_taxonomy_version": item.get("ability_taxonomy_version"),
+        "ability_labels": ability_labels([str(item.get("ability_taxonomy_version"))]),
         "source_labels": source_labels,
         "events": events,
         "turns": turn_rows,
@@ -601,6 +603,7 @@ class Aggregator:
 
     def __init__(self) -> None:
         self.total = 0
+        self.ability_versions: set[str] = set()
         self.counts: Counter[str] = Counter()
         self.groups: dict[str, dict[str, Counter[str]]] = {k: {} for k in QUALITY_DIMENSIONS}
         self.turn_groups: dict[str, dict[str, Counter[str]]] = {
@@ -629,6 +632,8 @@ class Aggregator:
 
     def add(self, case: dict[str, Any]) -> None:
         self.total += 1
+        if case.get("ability_taxonomy_version"):
+            self.ability_versions.add(case["ability_taxonomy_version"])
         self.judge_definitions.update(case["judge_definitions"])
         self.agent_limits.update({fingerprint(v): v for v in case["agent_limits"]})
         self.context_windows.update(case["context_windows"])
@@ -656,6 +661,10 @@ class Aggregator:
                 self.counts[unit + "_ability_valid"] += 1
                 score = case["score"] if unit == "qa" else record["score"]
                 self.counts[unit + "_ability_score_" + str(score)] += 1
+            if record["ability_family"] not in (["unknown"], ["not_applicable"]):
+                self.counts[unit + "_ability_family_valid"] += 1
+                score = case["score"] if unit == "qa" else record["score"]
+                self.counts[unit + "_ability_family_score_" + str(score)] += 1
             for family in record["ability_family"]:
                 if family not in {"unknown", "not_applicable"}:
                     score = case["score"] if unit == "qa" else record["score"]
@@ -716,6 +725,8 @@ class Aggregator:
         return {
             "schema_version": 2,
             "rule_version": RULE_VERSION,
+            "ability_taxonomy_versions": sorted(self.ability_versions),
+            "ability_labels": ability_labels(self.ability_versions),
             "source": {
                 **metadata,
                 "judge_definition_fingerprints": sorted(self.judge_definitions),
@@ -732,6 +743,8 @@ class Aggregator:
             "denominators": {
                 "qa": self.total,
                 "ability_valid": self.counts["qa_ability_valid"],
+                "ability_family_valid": self.counts["qa_ability_family_valid"],
+                "turn_ability_family_valid": self.counts["turn_ability_family_valid"],
                 "turn_ability_valid": self.counts["turn_ability_valid"],
                 "content_valid": sum(
                     c["total"]
@@ -773,8 +786,8 @@ class Aggregator:
             ],
             "definitions": [
                 "能力标签按明确版本读取；题级是回答轮主能力并集，轮级采用本轮能力与得分。旧内容标签仍用原口径。",
-                "普通能力组与抗幻觉、注入防护单列；澄清轮与安全题能力不适用，辅助能力不计主能力分母。",
-                "能力占比分母按题或轮去重；多标签可以重叠，不以标签成员数充当题数；历史未记录不推断。",
+                "v2一级含抗幻觉H与抗注入I，二者暂不设二级；v1保留原三类口径，普通澄清轮不计能力，支撑能力不计主标签。",
+                "一级、二级能力分母分别按题或轮去重；多标签可重叠，历史未记录不推断。混合版本报告显式展示各版名称，标签代码汇总不得解释为同口径比较。",
                 "不适用、待核定、未记录题型单列，不进入有效内容题型的占比分母。",
                 "证据指纹与标签指纹分开保存；标签变化不会标成GT变化，标签不同不提供改善汇总。",
                 "内容类型仅取明确的内容任务标签；行为测试、预期动作、测试场景不作为内容类型。未标注内容类型不推断。",

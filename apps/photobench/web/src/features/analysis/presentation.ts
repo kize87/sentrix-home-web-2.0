@@ -1,4 +1,4 @@
-import { taxonomyLabels } from "../../lib/qaTaxonomy.ts";
+import { taxonomyLabels, abilityVersionLabels } from "../../lib/qaTaxonomy.ts";
 /** Display the dataset's saved labels; never infer a missing classification. */
 export const dimensions: Record<string, string> = {
   ability_family: "一级能力", ability_type: "二级能力", benchmark_group: "测试分组",
@@ -34,7 +34,9 @@ const labels: Record<string, string> = {
   completed: "已完成", completed_with_errors: "完成但有错误", interrupted: "已中断",
   normal: "正常结束", failed: "执行失败", cancelled: "已取消",
 };
-export const displayLabel = (value: string) => value.split(" / ").map(part => taxonomyLabels[part] || labels[part] || part).join("、");
+export const displayWithLabels = (value: string, overrides: Record<string, string>) => value.split(" / ").map(part => overrides[part] || taxonomyLabels[part] || labels[part] || part).join("、");
+export const displayLabel = (value: string) => displayWithLabels(value, {});
+export const reportAbilityLabels = (report: {rule_version: number; ability_labels?: Record<string, string>}) => report.rule_version === 7 ? abilityVersionLabels("ability-2026.10.28-v1") : report.ability_labels || {};
 export const scores = [
   { value: "2", label: "满分（2分）", short: "满分", color: "#287c65" },
   { value: "1", label: "部分完成（1分）", short: "部分完成", color: "#ba8527" },

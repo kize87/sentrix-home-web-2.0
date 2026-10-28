@@ -11,7 +11,7 @@ import type {
 } from "../../api/analysis.ts";
 import { activeAnalysis } from "../../api/analysis.ts";
 import { ComparisonPicker } from "./ComparisonPicker.tsx";
-import { dimensions, displayLabel, percent, scoreLabel, scores } from "./presentation.ts";
+import { dimensions, displayWithLabels, reportAbilityLabels, percent, scoreLabel, scores } from "./presentation.ts";
 import { AnalysisCharts } from "./AnalysisCharts.tsx";
 import "./analysis.css";
 
@@ -94,15 +94,20 @@ function Evidence({
 }
 function CaseCard({
   c,
+  abilityLabels,
   runId,
   selected,
   toggle,
 }: {
   c: AnalysisCase;
+  abilityLabels: Record<string, string>;
   runId: string;
   selected: boolean;
   toggle: () => void;
 }) {
+  const displayLabel = (value: string) => displayWithLabels(value, c.ability_labels || abilityLabels);
+  const abilities = [c.dimensions.ability_family, c.dimensions.ability_type]
+    .filter(value => value && !["unknown", "not_applicable"].includes(value)).map(displayLabel).join(" · ");
   return (
     <details className="analysis-case" id={`analysis-i${c.index}:case`}>
       <summary>
@@ -116,7 +121,7 @@ function CaseCard({
         <span className={`analysis-outcome outcome-${c.score ?? "None"}`}>{scoreLabel(c.score)}</span>{" "}
         {c.question || c.qa_id || c.index}
         <small>{c.qa_id} · {c.dimensions.benchmark_group && c.dimensions.benchmark_group !== "unknown"
-          ? `${displayLabel(c.dimensions.benchmark_group)} · ${displayLabel(c.dimensions.ability_type || "unknown")}`
+          ? abilities || displayLabel(c.dimensions.benchmark_group)
           : `${displayLabel(c.dimensions.content_subtype || "unknown")} · ${c.dimensions.content_type === "unknown" ? "未标注内容题型" : displayLabel(c.dimensions.content_type || "unknown")}`} · {displayLabel(c.execution)} · {c.events.length}次运行异常</small>
       </summary>
       <h5>问题</h5>
@@ -323,6 +328,7 @@ export function ErrorAnalysisPanel({
     return () => { alive = false; window.clearTimeout(timer); };
   }, [open, preparingOther, job?.job_id, runId]);
   const r = job?.status === "completed" ? job.report : undefined;
+  const displayLabel = (value: string) => displayWithLabels(value, r ? reportAbilityLabels(r) : {});
   function filter(v: AnalysisFilters, replace = false) {
     setFilters((old) => replace ? v : { ...old, ...v });
     setPage(1); setCasesLoading(true); setSelected([]); setSelectionNote("");
@@ -671,6 +677,7 @@ export function ErrorAnalysisPanel({
               {selectionNote && <p role="status">{selectionNote}</p>}
               {casesLoading ? null : data.total === 0 ? <p>没有符合当前条件的题目。可清空筛选查看全部。</p> : data.items.map((c) => (
                 <CaseCard
+                  abilityLabels={reportAbilityLabels(r!)}
                   key={`${job?.job_id}-${c.index}`}
                   c={c}
                   runId={runId}

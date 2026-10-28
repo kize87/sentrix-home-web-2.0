@@ -2,7 +2,7 @@ import { qaTaxonomy, subtypeParent, abilityParent } from "../../lib/qaTaxonomy.t
 import { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import type { EChartsOption } from "echarts";
-import { dimensions, displayLabel, percent, scores } from "./presentation.ts";
+import { dimensions, displayWithLabels, reportAbilityLabels, percent, scores } from "./presentation.ts";
 import type { AnalysisFilters, AnalysisReport } from "../../api/analysis.ts";
 
 export function AnalysisChart({
@@ -62,6 +62,7 @@ export function AnalysisCharts({ report: r, filter }: {
   report: AnalysisReport;
   filter: (value: AnalysisFilters) => void;
 }) {
+  const displayLabel = (value: string) => displayWithLabels(value, reportAbilityLabels(r));
   const [dimension, setDimension] = useState(r.rule_version >= 7 ? "ability_family" : "content_type");
   const [parent, setParent] = useState("");
   const [unit, setUnit] = useState("qa");
@@ -84,7 +85,7 @@ export function AnalysisCharts({ report: r, filter }: {
   const excluded = ["unknown", "not_applicable", "pending_review"];
   const missingType = isContent ? rows.filter(row => excluded.includes(row.value)).reduce((n, row) => n + Number(row[`score_${score}`] || 0), 0) : 0;
   const scoreBase = isAbility
-    ? (parent && child ? scoreTotal : r.counts[`${unitKey}_ability_score_${score}`] || 0)
+    ? (parent && child ? scoreTotal : r.counts[`${unitKey}_ability${dimension === "ability_family" && r.rule_version >= 8 ? "_family" : ""}_score_${score}`] || 0)
     : scoreTotal - missingType;
   const groupLabel = (value: string) => dimension === "content_type" && value === "unknown" ? "未标注内容题型" : displayLabel(value);
   const scoreRows = rows.filter(row => !isContent || !excluded.includes(row.value)).map(row => ({
@@ -179,8 +180,9 @@ export function AnalysisCharts({ report: r, filter }: {
           <option value="">全部大类</option>{Object.entries(qaTaxonomy.tasks).map(([key, task]) => <option key={key} value={key}>{task.label}</option>)}
         </select></label>}
         {dimension === "ability_type" && <label>一级能力<select aria-label="分析一级能力" value={parent} onChange={e => setParent(e.target.value)}>
-          <option value="">全部能力</option>{Object.entries(qaTaxonomy.abilities.families).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          <option value="">全部能力</option>{Object.keys(qaTaxonomy.abilities.families).filter(key => Object.values(abilityParent).includes(key)).map(key => <option key={key} value={key}>{displayLabel(key)}</option>)}
         </select></label>}
+        {dimension === "ability_type" && r.rule_version >= 8 && <span className="analysis-hint">抗幻觉、抗注入攻击暂不细分，请在一级标签中筛选。</span>}
         {dimension === "ability_family" && <button className="btn compact" onClick={() => setDimension("ability_type")}>展开二级能力</button>}
         {dimension === "content_type" && r.rule_version >= 5 && <button className="btn compact" onClick={() => setDimension("content_subtype")}>展开细分题型</button>}
         <label>显示方式<select aria-label="分布显示方式" value={ratio ? "ratio" : "count"} onChange={e => setRatio(e.target.value === "ratio")}>

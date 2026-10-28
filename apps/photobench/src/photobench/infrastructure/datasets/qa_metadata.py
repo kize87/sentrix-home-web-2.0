@@ -19,6 +19,7 @@ from typing import Any
 #: 而这张表是「每个 qa_id 一条」的，全库扫描一次。
 _FIELDS = (
     "ability_taxonomy_version",
+    "ability_family_ids",
     "ability_primary_ids",
     "ability_supporting_ids",
     "benchmark_group",

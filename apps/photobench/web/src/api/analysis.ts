@@ -39,6 +39,8 @@ export interface AnalysisCase {
   reference_answer: string;
   score: number | null;
   execution: string;
+  ability_taxonomy_version?: string | null;
+  ability_labels?: Record<string, string>;
   dimensions: Record<string, string>;
   events: AnalysisEvent[];
   turns: AnalysisTurn[];
@@ -53,6 +55,8 @@ export interface AnalysisReport {
   schema_version: number;
   rule_version: number;
   generated_at: number;
+  ability_taxonomy_versions?: string[];
+  ability_labels?: Record<string, string>;
   item_count: number;
   source: Record<string, unknown>;
   result_fingerprint: string;

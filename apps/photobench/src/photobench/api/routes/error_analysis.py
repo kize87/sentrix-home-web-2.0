@@ -76,6 +76,8 @@ class AnalysisReport(BaseModel):
     source: dict[str, Any]
     result_fingerprint: str
     gt_fingerprint: str
+    ability_taxonomy_versions: list[str] = Field(default_factory=list)
+    ability_labels: dict[str, str] = Field(default_factory=dict)
     annotation_fingerprint: str | None = None
     turn_groups: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     item_count: int

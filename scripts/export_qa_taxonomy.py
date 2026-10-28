@@ -29,8 +29,17 @@ export const subtypeParent: Record<string, string> = Object.fromEntries(
     ([key, task]) => Object.keys(task.subtypes).map(sub => [sub, key])),
 );
 export const abilityParent: Record<string, string> = Object.fromEntries(
-  Object.keys(qaTaxonomy.abilities.types).map(key => [key, key[0]]),
+  [...new Set(Object.values(qaTaxonomy.ability_versions).flatMap(v => Object.keys(v.types)))]
+    .map(key => [key, key[0]]),
 );
+export function abilityVersionLabels(version?: string | null): Record<string, string> {
+  const versions: Record<string, {
+    families: Record<string, string>; types: Record<string, string>; groups: Record<string, string>;
+  }> = qaTaxonomy.ability_versions;
+  const value = version ? versions[version] : undefined;
+  return value ? {...value.families, ...value.types, ...value.groups} : {};
+}
+export const abilityLabel = (id: string, version?: string | null) => abilityVersionLabels(version)[id] || id;
 export const taxonomyLabel = (value: unknown) => taxonomyLabels[String(value)] || String(value || "未记录");
 """
     if args.check:

@@ -47,30 +47,84 @@ export const qaTaxonomy = {
     "3.0"
   ],
   "abilities": {
-    "version": "ability-2026.10.28-v1",
+    "version": "ability-2026.10.28-v2",
     "families": {
       "P": "信息获取与感知",
       "R": "推理与计算",
-      "S": "归纳与总结"
+      "S": "归纳与总结",
+      "H": "抗幻觉",
+      "I": "抗注入攻击"
     },
     "types": {
-      "P1": "记录定位与筛选",
-      "P2": "已记录信息读取",
-      "P3": "视觉内容识别",
-      "P4": "画面文字读取",
+      "P1": "媒体定位与筛选",
+      "P2": "记录属性查询",
+      "P3": "视觉内容理解",
+      "P4": "画面文字识读",
       "R1": "计数与去重统计",
-      "R2": "数值运算",
+      "R2": "数值计算",
       "R3": "比较与排序",
-      "R4": "关系与时空推断",
+      "R4": "关系与情境推断",
       "S1": "场景综合描述",
-      "S2": "单事件概括",
-      "S3": "跨事件归纳",
-      "S4": "过程与时间线整理"
+      "S2": "经历与过程总结"
     },
     "groups": {
       "ordinary": "普通能力题",
       "hallucination": "抗幻觉拒答",
       "injection": "注入防护"
+    }
+  },
+  "ability_versions": {
+    "ability-2026.10.28-v1": {
+      "families": {
+        "P": "信息获取与感知",
+        "R": "推理与计算",
+        "S": "归纳与总结"
+      },
+      "types": {
+        "P1": "记录定位与筛选",
+        "P2": "已记录信息读取",
+        "P3": "视觉内容识别",
+        "P4": "画面文字读取",
+        "R1": "计数与去重统计",
+        "R2": "数值运算",
+        "R3": "比较与排序",
+        "R4": "关系与时空推断",
+        "S1": "场景综合描述",
+        "S2": "单事件概括",
+        "S3": "跨事件归纳",
+        "S4": "过程与时间线整理"
+      },
+      "groups": {
+        "ordinary": "普通能力题",
+        "hallucination": "抗幻觉拒答",
+        "injection": "注入防护"
+      }
+    },
+    "ability-2026.10.28-v2": {
+      "families": {
+        "P": "信息获取与感知",
+        "R": "推理与计算",
+        "S": "归纳与总结",
+        "H": "抗幻觉",
+        "I": "抗注入攻击"
+      },
+      "types": {
+        "P1": "媒体定位与筛选",
+        "P2": "记录属性查询",
+        "P3": "视觉内容理解",
+        "P4": "画面文字识读",
+        "R1": "计数与去重统计",
+        "R2": "数值计算",
+        "R3": "比较与排序",
+        "R4": "关系与情境推断",
+        "S1": "场景综合描述",
+        "S2": "经历与过程总结"
+      },
+      "groups": {
+        "ordinary": "普通能力题",
+        "hallucination": "抗幻觉拒答",
+        "injection": "注入防护"
+      }
     }
   },
   "actions": {
@@ -107,6 +161,15 @@ export const subtypeParent: Record<string, string> = Object.fromEntries(
     ([key, task]) => Object.keys(task.subtypes).map(sub => [sub, key])),
 );
 export const abilityParent: Record<string, string> = Object.fromEntries(
-  Object.keys(qaTaxonomy.abilities.types).map(key => [key, key[0]]),
+  [...new Set(Object.values(qaTaxonomy.ability_versions).flatMap(v => Object.keys(v.types)))]
+    .map(key => [key, key[0]]),
 );
+export function abilityVersionLabels(version?: string | null): Record<string, string> {
+  const versions: Record<string, {
+    families: Record<string, string>; types: Record<string, string>; groups: Record<string, string>;
+  }> = qaTaxonomy.ability_versions;
+  const value = version ? versions[version] : undefined;
+  return value ? {...value.families, ...value.types, ...value.groups} : {};
+}
+export const abilityLabel = (id: string, version?: string | null) => abilityVersionLabels(version)[id] || id;
 export const taxonomyLabel = (value: unknown) => taxonomyLabels[String(value)] || String(value || "未记录");

@@ -11,7 +11,8 @@ import pytest
 from test_error_analysis import item, report
 
 from photobench.application.run_execution.service import PASSTHROUGH_FIELDS
-from photobench.domain.datasets.ability_taxonomy import ABILITY_FIELDS, ABILITY_VERSION, ability_dimensions
+from photobench.domain.datasets.ability_taxonomy import ABILITY_FIELDS, ability_dimensions
+from photobench.domain.datasets.ability_taxonomy import LEGACY_ABILITY_VERSION as ABILITY_VERSION
 from photobench.domain.datasets.qa_taxonomy import validate_qa_annotations
 from photobench.domain.error_analysis.exports import export_report
 from photobench.domain.error_analysis.rules import case_from_item, matches
@@ -176,16 +177,18 @@ def test_schema3_loader_and_metadata_preserve_abilities_and_manifest_version(tmp
         source.qa_rows("a", "new")
 
 
-def test_execution_freezes_and_records_each_turns_own_abilities():
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_execution_freezes_and_records_each_turns_own_abilities(version):
+    annotate = v2_labels if version == "v2" else labels
     from fakes_execution import FakeAlbums, FakeSentrixClient
     from test_run_execution import _assets, _completed_turn, _execution, _manifest, _polls, _request, _rows
 
     row = {
         **_rows()[0],
-        **labels(["P1", "P3"]),
+        **annotate(["P1", "P3"]),
         "conversation": [
-            {**labels(["P1"]), "message": "find", "reference_answer": "found"},
-            {**labels(["P3"]), "message": "color?", "reference_answer": "blue"},
+            {**annotate(["P1"]), "message": "find", "reference_answer": "found"},
+            {**annotate(["P3"]), "message": "color?", "reference_answer": "blue"},
         ],
     }
     albums = FakeAlbums(
@@ -205,7 +208,9 @@ def test_execution_freezes_and_records_each_turns_own_abilities():
     assert [t["ability_type"] for t in case_from_item(result, 0)["turns"]] == [["P1"], ["P3"]]
 
 
-def test_api_filter_and_exports_use_the_same_versioned_ability_case_set(tmp_path: Path):
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_api_filter_and_exports_use_the_same_versioned_ability_case_set(tmp_path: Path, version):
+    annotate = v2_labels if version == "v2" else labels
     from fastapi.testclient import TestClient
     from test_error_analysis import atomic, await_job, write_run
 
@@ -213,7 +218,9 @@ def test_api_filter_and_exports_use_the_same_versioned_ability_case_set(tmp_path
     from photobench.main import create_app
 
     root = tmp_path / "results"
-    write_run(root, items=[item(**labels(["P1"])), item(qa_id="other", **labels([], "injection", "refuse"))])
+    write_run(
+        root, items=[item(**annotate(["P1"])), item(qa_id="other", **annotate([], "injection", "refuse"))]
+    )
     config = tmp_path / "config"
     config.mkdir()
     atomic(
@@ -241,4 +248,92 @@ def test_api_filter_and_exports_use_the_same_versioned_ability_case_set(tmp_path
             exported = client.get(url + "/export?format=json&" + query)
             assert len(exported.json()["cases"]) == expected
         assert "ability_family" in client.get(url + "/export?format=csv&ability_type=P1").text
-        assert "记录定位与筛选" in client.get(url + "/export?format=html&ability_type=P1").text
+        assert ("记录定位与筛选" if version == "v1" else "媒体定位与筛选") in client.get(
+            url + "/export?format=html&ability_type=P1"
+        ).text
+
+
+def v2_labels(ids=None, group="ordinary", action="answer"):
+    from photobench.domain.datasets.ability_taxonomy import ABILITY_VERSION as CURRENT
+
+    result = labels(ids, group, action)
+    families = {"ordinary": sorted({v[0] for v in ids or []}), "hallucination": ["H"], "injection": ["I"]}
+    result.update(ability_taxonomy_version=CURRENT, ability_family_ids=families[group])
+    return result
+
+
+def test_v2_all_five_directions_have_distinct_unique_denominators():
+    ordinary = case_from_item(item(**v2_labels(["P3", "R1"])), 0)
+    hallucination = case_from_item(item(qa_id="h", **v2_labels([], "hallucination", "refuse")), 1)
+    injection = case_from_item(item(qa_id="i", **v2_labels([], "injection", "refuse")), 2)
+    cases = [ordinary, hallucination, injection]
+    r = report(cases)
+    assert r["denominators"]["ability_family_valid"] == 3
+    assert r["denominators"]["ability_valid"] == 1
+    assert r["denominators"]["turn_ability_family_valid"] == 3
+    assert r["counts"]["qa_ability_family_score_0"] == 3
+    assert r["counts"]["qa_ability_score_0"] == 1
+    assert {x["value"]: x["total"] for x in r["groups"]["ability_family"]} == {"P": 1, "R": 1, "H": 1, "I": 1}
+    assert ability_dimensions(v2_labels([], "injection", "refuse"))["ability_type"] == ["not_applicable"]
+    assert matches(hallucination, {"ability_family": "H"})
+    assert not matches(hallucination, {"ability_type": "P3"})
+    html = export_report(r, cases, "html", {})
+    assert "抗幻觉" in html and "抗注入攻击" in html and "有效3题" in html and "有效1题" in html
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"ability_family_ids": []},
+        {"ability_family_ids": ["R"]},
+        {"ability_family_ids": ["P", "P"]},
+        {"ability_primary_ids": ["S4"]},
+        {"ability_primary_ids": ["H1"]},
+        {"ability_supporting_ids": ["I1"]},
+    ],
+)
+def test_v2_rejects_wrong_families_retired_types_and_invented_safety_subtypes(patch):
+    with pytest.raises(ValueError):
+        validate_qa_annotations({**v2_labels(["P1"]), **patch})
+
+
+def test_v2_clarification_turn_is_not_assigned_answering_families():
+    row = {
+        **v2_labels(["P1", "P3"]),
+        "conversation": [
+            v2_labels([], action="clarify"),
+            v2_labels(["P1"]),
+            v2_labels(["P3"]),
+        ],
+    }
+    validate_qa_annotations(row)
+    row["conversation"][0]["ability_family_ids"] = ["P"]
+    with pytest.raises(ValueError, match="family"):
+        validate_qa_annotations(row)
+
+
+def test_saved_version_controls_names_in_legacy_current_and_mixed_exports():
+    import csv
+    import io
+
+    old = case_from_item(item(**labels(["S4", "P1"])), 0)
+    new = case_from_item(item(**v2_labels(["S2", "P1"])), 1)
+    before = report([old])
+    after = report([new])
+    assert before["ability_labels"]["P1"] == "记录定位与筛选"
+    assert after["ability_labels"]["P1"] == "媒体定位与筛选"
+    assert "记录定位与筛选" in export_report(before, [old], "html", {})
+    assert "媒体定位与筛选" not in export_report(before, [old], "html", {})
+    assert "经历与过程总结" in export_report(after, [new], "html", {})
+    mixed = report([old, new])
+    assert "v1：记录定位与筛选" in mixed["ability_labels"]["P1"]
+    assert "v2：媒体定位与筛选" in mixed["ability_labels"]["P1"]
+    rows = list(csv.DictReader(io.StringIO(export_report(mixed, [old, new], "csv", {}))))
+    assert rows[0]["ability_taxonomy_version"].endswith("v1")
+    assert rows[1]["ability_taxonomy_version"].endswith("v2")
+    assert "记录定位与筛选" in rows[0]["ability_type_label"]
+    assert "媒体定位与筛选" in rows[1]["ability_type_label"]
+    # A saved rule-7 report has no labels catalog; its explicit historical version still wins.
+    before.pop("ability_labels")
+    before["rule_version"] = 7
+    assert "记录定位与筛选" in export_report(before, [old], "html", {})

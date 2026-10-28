@@ -265,3 +265,41 @@ it("新版异常热力图使用一级能力并把点击传给同一能力筛选"
   act(() => click({name: "", value: [0, 0, 1]}));
   expect(filter).toHaveBeenCalledWith(expect.objectContaining({ability_family: "P", content_type: "", code: "request_timeout", content_unit: "qa"}));
 });
+
+it("五类一级分布包含抗幻觉和抗注入，分母按题去重，二级保持普通题分母", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const filter = vi.fn();
+  const report = {rule_version: 8, item_count: 3,
+    ability_labels: {P: "信息获取与感知", H: "抗幻觉", I: "抗注入攻击", P1: "媒体定位与筛选"},
+    counts: {score_2: 3, qa_ability_family_score_2: 3, qa_ability_score_2: 1},
+    denominators: {turns: 3},
+    groups: {ability_family: [{value: "P", total: 1, score_2: 1}, {value: "H", total: 1, score_2: 1}, {value: "I", total: 1, score_2: 1}],
+      ability_type: [{value: "P1", total: 1, score_2: 1}, {value: "not_applicable", total: 2, score_2: 2}]},
+    errors: [], heatmap: [], behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  render(<AnalysisCharts report={report} filter={filter} />);
+  fireEvent.click(screen.getByText("按得分看题型"));
+  fireEvent.change(screen.getByLabelText("分布显示方式"), {target: {value: "ratio"}});
+  const option = chart.setOption.mock.calls.map(([x]) => x).reverse().find(x => x.series?.[0]?.data?.some((d: {name?: string}) => d.name === "H"));
+  expect(option.series[0].data).toEqual([{name: "P", value: 33.3}, {name: "H", value: 33.3}, {name: "I", value: 33.3}]);
+  fireEvent.click(screen.getByRole("button", {name: "抗幻觉 满分（2分）案例"}));
+  expect(filter).toHaveBeenLastCalledWith(expect.objectContaining({ability_family: "H", score: "2"}));
+  fireEvent.click(screen.getByRole("button", {name: "展开二级能力"}));
+  expect(screen.getByText(/抗幻觉、抗注入攻击暂不细分/)).toBeTruthy();
+  expect(screen.getByRole("button", {name: "媒体定位与筛选 满分（2分）案例"})).toBeTruthy();
+  expect(screen.getByText("100.0%")).toBeTruthy();
+  expect(screen.queryByRole("option", {name: "抗幻觉"})).toBeNull();
+});
+
+it("规则7保存的旧报告继续显示v1名称，不随新版字典静默更名", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const report = {rule_version: 7, item_count: 1, ability_labels: {}, counts: {}, denominators: {turns: 1},
+    groups: {ability_family: [{value: "P", total: 1}], ability_type: [{value: "P1", total: 1}, {value: "S4", total: 1}]},
+    errors: [], heatmap: [], behavior_matrix: [],
+  } as unknown as AnalysisReport;
+  render(<AnalysisCharts report={report} filter={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", {name: "展开二级能力"}));
+  expect(screen.getByText("记录定位与筛选")).toBeTruthy();
+  expect(screen.getByText("过程与时间线整理")).toBeTruthy();
+  expect(screen.queryByText("媒体定位与筛选")).toBeNull();
+});
