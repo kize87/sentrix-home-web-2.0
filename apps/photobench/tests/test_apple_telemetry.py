@@ -392,6 +392,13 @@ def test_process_groups_are_independent_not_added(apple_host):
     assert "model_process_mapped_weights_mib" not in data
     assert data["memory_complete"] is True
     assert data["system_memory_delta_mib"] == 0
+    assert data["model_process_gpu_memory_mib"] is None
+    assert data["product_stack_gpu_memory_mib"] is None
+    assert data["device_gpu_memory_mib"] is not None
+    assert (
+        data["resource_missing_reasons"]["model_process_gpu_memory_mib"]
+        == "runtime_does_not_expose_process_gpu_bytes"
+    )
 
 
 def test_missing_product_group_does_not_hide_main(apple_host, monkeypatch):
@@ -438,7 +445,10 @@ def test_gpu_stats_retains_device_diagnostics(apple_host):
     data = apple.LocalAppleUnifiedTelemetryProvider().gpu_stats()["data"]["gpus"][0]
     assert data["memory_unit"] == "apple_resident_mib"
     assert data["gpu_in_use_unified_memory_mib"] == 0.5
+    assert data["device_gpu_memory_mib"] is not None
+    assert data["memory_dependencies"]["device_gpu_memory_mib"] == ["device_gpu"]
+    assert data["memory_observations"]["device_gpu"]["source"] == "ioreg_alloc_system_memory"
 
 
-def test_kv_cache_is_not_applicable_on_unified_memory():
-    assert apple.LocalAppleUnifiedTelemetryProvider().kv_cache()["status"] == "not_applicable"
+def test_kv_cache_bytes_are_unavailable_without_runtime_reporting():
+    assert apple.LocalAppleUnifiedTelemetryProvider().kv_cache()["status"] == "unavailable"

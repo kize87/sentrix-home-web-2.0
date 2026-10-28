@@ -15,6 +15,8 @@
  *
  * 数据形状来自 `lib/telemetry.ts:telemetryChart`（只给 `{ history }`），option 由本组件组装。
  */
+import { ResourceTelemetryCard } from "./ResourceTelemetryCard.tsx";
+import { resourceProtocol } from "../../../lib/telemetry.ts";
 import { useEffect, useMemo, useRef } from "react";
 import type { SyntheticEvent } from "react";
 import * as echarts from "echarts";
@@ -253,6 +255,10 @@ export interface TelemetryCardProps {
 }
 
 export function TelemetryCard({ run }: TelemetryCardProps) {
+  return resourceProtocol(run) ? <ResourceTelemetryCard run={run} /> : <LegacyTelemetryCard run={run} />;
+}
+
+function LegacyTelemetryCard({ run }: TelemetryCardProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<EChartsType | null>(null);
   const sampleCount = telemetrySampleCount(run);

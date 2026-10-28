@@ -31,6 +31,7 @@ from photobench.domain.runtime.metrics import (
     APPLE_TEMPERATURE_MAX_C,
     APPLE_TEMPERATURE_MIN_C,
     MEMORY_OBSERVATION_TTL_SECONDS,
+    RESOURCE_TELEMETRY_VERSION,
     apple_power,
     apple_resident_bytes,
     apple_temperature,
@@ -38,6 +39,7 @@ from photobench.domain.runtime.metrics import (
     physical_memory_used,
 )
 from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
+from photobench.infrastructure.runtime.hardware import HostCpuSampler
 from photobench.infrastructure.runtime.telemetry_scope import (
     dedupe_rows as _dedupe_rows,
 )
@@ -620,6 +622,8 @@ class LocalAppleUnifiedTelemetryProvider:
     def __init__(self, endpoint_url: str = "", *, telemetry_services: Mapping[str, Any] | None = None):
         self.telemetry_services = telemetry_services
         parsed = urlparse(endpoint_url or "")
+        self.endpoint_url = f"{parsed.scheme}://{parsed.netloc}"
+        self._cpu = HostCpuSampler()
         self.port = str(parsed.port or "")
         self._last_memory: dict[str, Any] = {"status": "unavailable", "reason": "not_sampled"}
         self._device_sample: dict[str, Any] = {}
@@ -648,7 +652,16 @@ class LocalAppleUnifiedTelemetryProvider:
             sample.update(_MACMON.latest())
             return sample
         self._last_device_probe = time.monotonic()
+        gpu_started = time.monotonic()
         sample = parse_agx_performance(_run_text(["ioreg", "-r", "-c", "AGXAccelerator", "-l"], timeout=0.3))
+        sample["device_gpu_memory_mib"] = sample.get("gpu_allocated_unified_memory_mib")
+        sample["gpu_observation"] = {
+            "source": "ioreg_alloc_system_memory",
+            "status": "available" if sample.get("device_gpu_memory_mib") is not None else "unavailable",
+            "observed_at_monotonic": gpu_started,
+            "finished_at_monotonic": time.monotonic(),
+            "ttl_seconds": MEMORY_OBSERVATION_TTL_SECONDS,
+        }
         sample.update(_MACMON.latest())
         system_started = time.monotonic()
         memory = parse_vm_stat(_run_text(["vm_stat"], timeout=0.3), _page_size(), _total_bytes())
@@ -738,6 +751,7 @@ class LocalAppleUnifiedTelemetryProvider:
             }
         }
         data: dict[str, Any] = {
+            "protocol_version": RESOURCE_TELEMETRY_VERSION,
             "memory_accounting": "apple_footprint_resident_v2",
             "memory_unit": "apple_resident_mib",
             "memory_profile": {"method": "apple_footprint_resident_v2"},
@@ -782,6 +796,16 @@ class LocalAppleUnifiedTelemetryProvider:
                     {key: row.get(key) for key in ("pid", "process_name", "listening_ports")} for row in group
                 ]
         data["memory_complete"] = all(observations[name].get("status") == "available" for name in groups)
+        observations["device_gpu"] = device.get("gpu_observation") or {}
+        data["model_process_gpu_memory_mib"] = None
+        data["product_stack_gpu_memory_mib"] = None
+        data["device_gpu_memory_mib"] = device.get("device_gpu_memory_mib")
+        data["resource_missing_reasons"] = {
+            "model_process_gpu_memory_mib": "runtime_does_not_expose_process_gpu_bytes",
+            "product_stack_gpu_memory_mib": "runtime_does_not_expose_process_gpu_bytes",
+        }
+        data["memory_dependencies"]["device_gpu_memory_mib"] = ["device_gpu"]
+
         if model_complete:
             data["root_pid"] = model_rows[0]["pid"]
         used = device.get("system_memory_used_mib")
@@ -793,12 +817,16 @@ class LocalAppleUnifiedTelemetryProvider:
             data["system_memory_delta_mib"] = round(float(used) - self._system_baseline_mib, 2)
         return data
 
+    def pending_work(self) -> list[str]:
+        return self._memory_probe.pending_work()
+
     def gpu_stats(self) -> dict[str, Any]:
         device = self._device()
         gpu: dict[str, Any] = {"index": 0, "memory_unit": "apple_resident_mib"}
         for key in (
             "gpu_utilization_pct",
             "gpu_allocated_unified_memory_mib",
+            "device_gpu_memory_mib",
             "gpu_in_use_unified_memory_mib",
             "temperature_c",
             "cpu_temperature_c",
@@ -812,7 +840,17 @@ class LocalAppleUnifiedTelemetryProvider:
         ):
             if key in device:
                 gpu[key] = device[key]
-        return {"status": "available", "source": self.source, "data": {"gpus": [gpu]}}
+        gpu["memory_observations"] = {"device_gpu": device.get("gpu_observation") or {}}
+        gpu["memory_dependencies"] = {"device_gpu_memory_mib": ["device_gpu"]}
+        return {
+            "status": "available",
+            "source": self.source,
+            "data": {
+                "gpus": [gpu],
+                "protocol_version": RESOURCE_TELEMETRY_VERSION,
+                "memory_accounting": "apple_footprint_resident_v2",
+            },
+        }
 
     def process_memory(self) -> dict[str, Any]:
         data = self._augment()
@@ -841,15 +879,13 @@ class LocalAppleUnifiedTelemetryProvider:
             "system_memory_scope",
             "system_observation",
         )
-        return {
-            "status": "available",
-            "source": "vm_stat",
-            "data": {key: data[key] for key in keys if key in data},
-        }
+        result = {key: data[key] for key in keys if key in data}
+        result.update(cpu_utilization_pct=self._cpu.sample(), cpu_observed_at_monotonic=time.monotonic())
+        return {"status": "available", "source": "vm_stat", "data": result}
 
     def kv_cache(self) -> dict[str, Any]:
         return {
-            "status": "not_applicable",
+            "status": "unavailable",
             "source": "apple_unified",
-            "reason": "unified_memory_has_no_discrete_kv_pool",
+            "reason": "runtime_does_not_expose_kv_bytes",
         }

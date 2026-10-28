@@ -34,11 +34,15 @@ from typing import Any
 from photobench.domain.datasets.ability_taxonomy import ABILITY_FIELDS
 from photobench.domain.runs.judge import normalize_judge_score, parse_judge_json
 from photobench.domain.runtime.metrics import (
+    RESOURCE_FIELDS,
+    RESOURCE_TELEMETRY_VERSION,
     apple_power,
     apple_temperature,
+    cpu_freshness,
     device_freshness,
     finite_number,
     memory_freshness,
+    resource_records,
 )
 
 # 1.0 ``:933`` / ``:1261``。
@@ -1874,6 +1878,9 @@ GPU_SAMPLE_FIELDS = (
     "temperature_c",
     "cpu_temperature_c",
     "gpu_utilization_pct",
+    "cpu_utilization_pct",
+    "product_stack_gpu_memory_mib",
+    "device_gpu_memory_mib",
     "memory_used_mib",
     "gpu_allocated_unified_memory_mib",
     "gpu_in_use_unified_memory_mib",
@@ -1923,7 +1930,10 @@ def validated_telemetry_sample(sample: dict[str, Any]) -> tuple[dict[str, Any], 
             result[key] = None
             rejected.append(key)
     result, memory_rejected = memory_freshness(result)
-    return result, list(dict.fromkeys([*rejected, *memory_rejected]))
+    result, cpu_rejected = cpu_freshness(result)
+    if result.get("protocol_version") == RESOURCE_TELEMETRY_VERSION:
+        result["resource_metrics"] = resource_records(result)
+    return result, list(dict.fromkeys([*rejected, *memory_rejected, *cpu_rejected]))
 
 
 def telemetry_sampling(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -1984,6 +1994,44 @@ def series_stats(history: Sequence[dict[str, Any]], key: str) -> dict[str, Any]:
     }
 
 
+def resource_series_stats(history: Sequence[dict[str, Any]], key: str) -> dict[str, Any]:
+    stats = series_stats(history, key)
+    if not history or history[-1].get("protocol_version") != RESOURCE_TELEMETRY_VERSION:
+        return stats
+    points: dict[float, tuple[float | None, tuple[Any, ...]]] = {}
+    for sample in history:
+        timestamp = finite_number(sample.get("t", sample.get("_t")))
+        if timestamp is not None:
+            scope = tuple(
+                sample.get(name)
+                for name in ("phase", "index", "protocol_version", "memory_accounting", "power_scope")
+            )
+            points[timestamp] = (finite_number(sample.get(key)), scope)
+    ordered = sorted(points.items())
+    integral = covered = 0.0
+    for (left_t, (left, left_scope)), (right_t, (right, right_scope)) in zip(
+        ordered, ordered[1:], strict=False
+    ):
+        duration = right_t - left_t
+        if left is not None and right is not None and left_scope == right_scope and 0 < duration <= 3:
+            covered += duration
+            integral += (left + right) * 0.5 * duration
+    elapsed = ordered[-1][0] - ordered[0][0] if ordered else 0.0
+    stats.update(
+        mean=integral / covered if covered else None,
+        mean_kind="time_weighted_trapezoid",
+        covered_seconds=covered,
+        coverage_ratio=covered / elapsed if elapsed else None,
+    )
+    if key == "power_draw_w":
+        stats.update(
+            energy_joules=integral if covered else None,
+            energy_scope="covered_intervals",
+            energy_wh=integral / 3600 if covered else None,
+        )
+    return stats
+
+
 def downsample_history(history: Sequence[dict[str, Any]], limit: int = 240) -> list[dict[str, Any]]:
     """1.0 ``:5378`` 的 ``_downsample_history``：阶段切换点必须保留。"""
     count = len(history)
@@ -1993,6 +2041,14 @@ def downsample_history(history: Sequence[dict[str, Any]], limit: int = 240) -> l
     for index in range(1, count):
         if history[index].get("phase") != history[index - 1].get("phase"):
             chosen.update((index - 1, index))
+        if history[index].get("protocol_version") == RESOURCE_TELEMETRY_VERSION:
+            current, previous = history[index], history[index - 1]
+            missing_transition = any(
+                (finite_number(current.get(key)) is None) != (finite_number(previous.get(key)) is None)
+                for _, key, *_ in RESOURCE_FIELDS
+            )
+            if current.get("gap_before") or missing_transition:
+                chosen.update((index - 1, index))
     remaining = max(0, limit - len(chosen))
     candidates = [index for index in range(count) if index not in chosen]
     for index in range(remaining):
@@ -2030,6 +2086,11 @@ def _is_telemetry_series_key(key: str) -> bool:
         or key.startswith(("runtime_", "kv_cache_"))
         or key
         in {
+            "protocol_version",
+            "resource_metrics",
+            "resource_missing_reasons",
+            "cpu_observed_at_monotonic",
+            "system_memory_scope",
             "memory_accounting",
             "memory_complete",
             "memory_unit",
@@ -2082,6 +2143,12 @@ def attach_gpu_sample_history(live: dict[str, Any], lines: Sequence[str]) -> Non
             for key in invalid:
                 rejected[key] = rejected.get(key, 0) + 1
             point = {k: item[k] for k in item if _is_telemetry_series_key(k)}
+            if history and item.get("protocol_version") == RESOURCE_TELEMETRY_VERSION:
+                previous_t = finite_number(history[-1].get("t"))
+                current_t = finite_number(item.get("_t"))
+                point["gap_before"] = (
+                    previous_t is not None and current_t is not None and current_t - previous_t > 3
+                )
             if point:
                 history.append(
                     {
@@ -2108,7 +2175,10 @@ def attach_gpu_sample_history(live: dict[str, Any], lines: Sequence[str]) -> Non
             if scopes.get("benchmark_process_ram"):
                 latest.setdefault("benchmark_process_memory_scope", scopes["benchmark_process_ram"])
                 peak.setdefault("benchmark_process_memory_scope", scopes["benchmark_process_ram"])
-            live["_full_sample_stats"] = {key: series_stats(history, key) for key in GPU_AGGREGATE_KEYS}
+            live["_full_sample_stats"] = {
+                key: resource_series_stats(history, key) for key in GPU_AGGREGATE_KEYS
+            }
+            live["protocol_version"] = latest.get("protocol_version")
             live["field_stats"] = live["_full_sample_stats"]
             live["rejected_samples"] = rejected
             live["sampling"] = telemetry_sampling(history)
@@ -2134,6 +2204,9 @@ GPU_AGGREGATE_KEYS = (
     "temperature_c",
     "cpu_temperature_c",
     "gpu_utilization_pct",
+    "cpu_utilization_pct",
+    "product_stack_gpu_memory_mib",
+    "device_gpu_memory_mib",
     "memory_used_mib",
     "gpu_allocated_unified_memory_mib",
     "gpu_in_use_unified_memory_mib",
@@ -2184,7 +2257,9 @@ def aggregate_gpu_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
     keys = set(GPU_AGGREGATE_KEYS) | {
         key for sample in samples for key in sample if key.startswith(("runtime_", "kv_cache_"))
     }
-    metrics: dict[str, Any] = {key: stats for key in sorted(keys) if (stats := series_stats(samples, key))}
+    metrics: dict[str, Any] = {
+        key: stats for key in sorted(keys) if (stats := resource_series_stats(samples, key))
+    }
     metrics["sampling"] = telemetry_sampling(samples)
     latest = next((sample for sample in reversed(samples) if sample.get("memory_accounting")), samples[-1])
     if samples[-1].get("source") is not None:
@@ -2215,6 +2290,18 @@ def aggregate_gpu_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
         for sample in samples
         if isinstance(sample.get("model_process_memory_over_limit"), bool)
     ]
+    if latest.get("protocol_version") == RESOURCE_TELEMETRY_VERSION:
+        return {
+            "samples_count": len(samples),
+            **metrics,
+            "protocol_version": RESOURCE_TELEMETRY_VERSION,
+            "resource_metrics": latest.get("resource_metrics"),
+            "memory_profile": {
+                "method": latest.get("memory_accounting"),
+                "scope": "process_memory_and_gpu_separate",
+                "note": "Process memory and GPU allocation overlap on unified-memory platforms; do not add.",
+            },
+        }
     if (
         latest.get("memory_unit") == "host_smaps_rss_plus_gpu_mib"
         or latest.get("memory_accounting") == "jetson_pss_plus_nvmap_estimate"
@@ -2385,6 +2472,7 @@ def apply_live_sample(
     live["latest"] = {key: value for key, value in sample.items() if _is_telemetry_series_key(key)}
     live["metrics_contract_version"] = 2
     live["memory_accounting"] = sample.get("memory_accounting")
+    live["protocol_version"] = sample.get("protocol_version")
     live["model_processes"] = sample.get("model_processes") or []
     live["model_system_processes"] = sample.get("model_system_processes") or []
     live["benchmark_processes"] = sample.get("benchmark_processes") or []

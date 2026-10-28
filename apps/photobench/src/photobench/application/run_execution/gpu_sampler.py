@@ -38,7 +38,7 @@ from collections.abc import Callable
 from typing import Any
 
 from photobench.domain.runs.analysis import aggregate_gpu_samples, validated_telemetry_sample
-from photobench.domain.runtime.metrics import finite_number
+from photobench.domain.runtime.metrics import RESOURCE_TELEMETRY_VERSION, finite_number
 from photobench.domain.runtime.ports import ManagedTelemetryWork, OwnedTelemetryWork, TelemetryProvider
 
 #: 采样行会带上相位标签，读侧就不必去 run.json 里反查「这条样本属于哪一段」。
@@ -68,7 +68,7 @@ class GpuSampler:
     def __init__(
         self,
         provider: TelemetryProvider,
-        interval: float = 0.5,
+        interval: float = 1.0,
         on_sample: Callable[[dict[str, Any]], None] | None = None,
         on_aggregate: Callable[[dict[str, Any]], None] | None = None,
         publish_interval: float = 2.0,
@@ -199,18 +199,36 @@ class GpuSampler:
         )
         for gpu in data.get("gpus") or [{"index": 0}]:
             sample = dict(gpu)
+            for key in ("protocol_version", "memory_accounting"):
+                if key in data:
+                    sample[key] = data[key]
+            for key in (
+                "protocol_version",
+                "resource_missing_reasons",
+                "product_stack_gpu_memory_mib",
+                "device_gpu_memory_mib",
+            ):
+                if key in process_memory:
+                    sample[key] = process_memory[key]
+            for key in ("cpu_utilization_pct", "cpu_observed_at_monotonic"):
+                sample[key] = system_memory.get(key)
+            per_gpu = process_memory.get("gpu_process_memory_by_index")
+            gpu_memory = per_gpu.get(gpu.get("index"), {}) if isinstance(per_gpu, dict) else process_memory
+
             if sample.get("cpu_temperature_c") is None and data.get("cpu_temperature_c") is not None:
                 sample["cpu_temperature_c"] = data["cpu_temperature_c"]
             sample["_t"] = timestamp
             if gpu_result.get("status") == "available":
                 sample.setdefault("device_observed_at_monotonic", gpu_observed_at)
-                sample.setdefault("device_observation_ttl_seconds", 3 * self.interval)
+                sample.setdefault("device_observation_ttl_seconds", 3.0)
             sample["observed_at_epoch"] = time.time()
             sample["metrics_contract_version"] = 2
             sample["sampling_diagnostics"] = dict(timing)
             for key in ("memory_observation_version", "memory_observations", "memory_dependencies"):
                 if key in process_memory:
                     sample[key] = process_memory[key]
+            if sample.get("protocol_version") == RESOURCE_TELEMETRY_VERSION:
+                sample["memory_observation_version"] = 1
             if sample.get("memory_observation_version") == 1:
                 sample["memory_observations"] = dict(sample.get("memory_observations") or {})
                 sample["memory_observations"]["system"] = system_memory.get("system_observation") or {}
@@ -221,6 +239,18 @@ class GpuSampler:
                     "system_memory_available_mib",
                 ):
                     sample["memory_dependencies"][key] = ["system"]
+            if (
+                sample.get("memory_observation_version") == 1
+                and "device_gpu_memory_mib" not in sample["memory_dependencies"]
+            ):
+                sample["memory_observations"]["device_gpu"] = {
+                    "source": gpu_result.get("source"),
+                    "status": gpu_result.get("status"),
+                    "observed_at_monotonic": sample.get("device_observed_at_monotonic"),
+                    "finished_at_monotonic": gpu_observed_at,
+                    "ttl_seconds": 3.0,
+                }
+                sample["memory_dependencies"]["device_gpu_memory_mib"] = ["device_gpu"]
             sample["source_status"] = {
                 "device": gpu_result.get("status"),
                 "process": memory_result.get("status"),
@@ -242,22 +272,20 @@ class GpuSampler:
                 "product_stack_footprint_mib",
                 "product_stack_mapped_weights_mib",
             ):
-                sample[key] = process_memory.get(key)
+                sample[key] = process_memory.get(key, sample.get(key))
             sample["model_process_memory_used_mib"] = process_memory.get("process_memory_used_mib")
             sample["model_process_system_memory_used_mib"] = process_memory.get(
                 "model_process_system_memory_used_mib"
             )
-            # Jetson 的 CPU/GPU 拆分：三个字段在 unified_model_memory 里已经算好，
-            # 但样本映射不显式搬运就会在落盘前被丢掉（46 上因此少 79%）。
+            # 进程内存与GPU分配分别传递；多卡GPU按当前卡取值。
             sample["model_process_host_memory_mib"] = process_memory.get("model_process_host_memory_mib")
-            sample["model_process_gpu_memory_mib"] = process_memory.get("model_process_gpu_memory_mib")
+            sample["model_process_gpu_memory_mib"] = gpu_memory.get("model_process_gpu_memory_mib")
+            sample["product_stack_gpu_memory_mib"] = gpu_memory.get("product_stack_gpu_memory_mib")
             sample["model_process_gpu_memory_source"] = process_memory.get("model_process_gpu_memory_source")
             sample["benchmark_process_memory_used_mib"] = process_memory.get(
                 "benchmark_process_memory_used_mib"
             )
-            sample["benchmark_process_gpu_memory_mib"] = process_memory.get(
-                "benchmark_process_gpu_memory_mib"
-            )
+            sample["benchmark_process_gpu_memory_mib"] = gpu_memory.get("benchmark_process_gpu_memory_mib")
             sample["other_processes_memory_mib"] = process_memory.get("other_processes_memory_mib")
             sample["all_processes_memory_mib"] = process_memory.get("all_processes_memory_mib")
             sample["system_memory_used_mib"] = system_memory.get("system_memory_used_mib")

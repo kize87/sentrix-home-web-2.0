@@ -12,11 +12,7 @@ from photobench.infrastructure.runtime import jetson_telemetry as jetson
 
 def test_unknown_nvmap_does_not_become_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(jetson, "_nvmap_clients_mib", lambda: None)
-    result = jetson.unified_model_memory({12}, rss_mib=100, host_rss_mib=100)
-    assert result["model_process_host_memory_mib"] == 100
-    assert result["model_process_gpu_memory_mib"] is None
-    assert result["model_process_system_memory_used_mib"] is None
-    assert result["memory_complete"] is False
+    assert jetson._process_gpu_memory_mib({12}) == (None, "unavailable")
 
 
 def _component_sample():
@@ -83,13 +79,13 @@ def test_new_version_cannot_claim_a_total_without_dependencies_and_legacy_is_pre
     assert result["product_stack_memory_mib"] is None
 
 
-def test_nx_power_is_board_power_and_keeps_rails() -> None:
+def test_nx_power_is_module_input_and_keeps_rails() -> None:
     sample = jetson._parse_tegrastats_line(
         "RAM 4000/16000MB GR3D_FREQ 75% gpu@55C "
         "VDD_IN 12000mW/11000mW VDD_CPU_GPU_CV 8000mW/7000mW VDD_SOC 2000mW/1900mW"
     )
     assert sample["power_draw_w"] == 12
-    assert sample["power_scope"] == "board"
+    assert sample["power_scope"] == "module_input"
     assert sample["power_rail"] == "VDD_IN"
     assert sample["power_rails_w"]["VDD_CPU_GPU_CV"] == 8
 
@@ -303,14 +299,9 @@ def test_nvidia_ram_never_uses_nvmap_or_other_instances(monkeypatch: pytest.Monk
     assert aggregate["source"] == "host_nvidia_smi"
 
 
-@pytest.mark.parametrize("residual,expected", [(0, None), (20, 20)])
-def test_nvmap_residual_is_only_a_positive_estimate(
-    monkeypatch: pytest.MonkeyPatch, residual, expected
-) -> None:
+def test_gpu_ledger_unavailable_is_not_derived_from_host_memory(monkeypatch) -> None:
     monkeypatch.setattr(jetson, "_nvmap_clients_mib", lambda: None)
-    result = jetson.unified_model_memory({12}, rss_mib=100 + residual, host_rss_mib=100)
-    assert result["model_process_gpu_memory_mib"] == expected
-    assert result["model_process_gpu_memory_source"] == ("vmrss_residual" if residual else "unavailable")
+    assert jetson._process_gpu_memory_mib({12}) == (None, "unavailable")
 
 
 def test_running_execution_freezes_real_http_and_telemetry(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -567,8 +558,9 @@ def test_jetson_no_auxiliary_is_zero_and_disappeared_model_cannot_reuse_total(mo
     good = jetson._augment_local_process_memory(
         {}, model_pid=None, endpoint_port="8100", telemetry_services=scope
     )
-    assert good["product_stack_memory_mib"] == 28
-    assert good["model_process_system_memory_used_mib"] == 30
+    assert good["product_stack_memory_mib"] == 8
+    assert good["product_stack_gpu_memory_mib"] == 20
+    assert good["model_process_system_memory_used_mib"] == 8
     assert good["sentrix_auxiliary_model_uma_mib"] == 0
     rows.clear()
     lost = jetson._augment_local_process_memory(

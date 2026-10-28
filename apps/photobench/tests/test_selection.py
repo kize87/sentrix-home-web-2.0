@@ -189,12 +189,13 @@ def test_tegrastats_line_parsing_covers_ram_gpu_power_and_temperature():
 
     **区分力**：四条规则各断言一次——一个只解析 RAM 的实现会在另外三条上返回空。
     """
-    parsed = _parse_tegrastats_line("RAM 1234/8192MB GR3D_FREQ 45% VDD_GPU_SOC 7000mW tj@55.5C cpu@40.25C")
+    parsed = _parse_tegrastats_line("RAM 1234/8192MB GR3D_FREQ 45% VDD_GPU_SOC 7000mW gpu@55.5C cpu@40.25C")
     assert parsed["system_memory_used_mib"] == 1234
     assert parsed["system_memory_total_mib"] == 8192
     assert parsed["system_memory_available_mib"] == 8192 - 1234
     assert parsed["gpu_utilization_pct"] == 45
-    assert parsed["power_draw_w"] == 7.0
+    assert parsed["power_draw_w"] is None
+    assert parsed["power_rails_w"]["VDD_GPU_SOC"] == 7.0
     assert parsed["temperature_c"] == 55.5
     assert parsed["cpu_temperature_c"] == 40.25
 
@@ -210,7 +211,7 @@ def test_jetson_gpu_stats_always_returns_one_uma_gpu_row(monkeypatch: pytest.Mon
 
     S9b-2 的真机采样为空就是因为选了 ``UnavailableTelemetryProvider``（没有 ``gpus``）。
     这里把进程探测与设备读数全部替换成常量，断言的是**响应信封的形状**：
-    ``status=available`` 且 ``data.gpus[0].memory_unit == process_pss_uma_mib``——
+    ``status=available`` 且 ``data.gpus[0].memory_unit == process_pss_mib``——
     一个漏掉 ``gpus`` 的实现会让采样器静默地一个点都不采。
     """
     import photobench.infrastructure.runtime.jetson_telemetry as jetson_module
@@ -240,7 +241,7 @@ def test_jetson_gpu_stats_always_returns_one_uma_gpu_row(monkeypatch: pytest.Mon
     assert result["status"] == "available"
     assert result["source"] == "jetson_local_pss"
     assert len(result["data"]["gpus"]) == 1
-    assert result["data"]["gpus"][0]["memory_unit"] == "process_pss_uma_mib"
+    assert result["data"]["gpus"][0]["memory_unit"] == "process_pss_mib"
     memory = provider.process_memory()
     assert memory["data"]["root_pid"] == 4242
     assert memory["data"]["process_memory_used_mib"] == 1234.5

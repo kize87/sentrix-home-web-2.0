@@ -74,7 +74,7 @@ def test_sampler_uses_absolute_schedule_and_skips_missed_ticks(monkeypatch, work
             assert delay > 0
             now[0] += delay
 
-    sampler = GpuSampler(FakeTelemetry())
+    sampler = GpuSampler(FakeTelemetry(), interval=0.5)
     sampler._stop = Stop()
 
     def sample(**kwargs):

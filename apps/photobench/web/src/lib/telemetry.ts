@@ -49,7 +49,7 @@ export function telemetryPlatform(raw: unknown): string {
   const value = dict(raw);
   const accounting = value.memory_accounting || dict(value.latest).memory_accounting;
   if (["apple_capacity_estimate", "apple_footprint_resident_v2"].includes(accounting)) return "apple_unified";
-  if (accounting === "jetson_pss_plus_nvmap_estimate") return "jetson_local_pss";
+  if (["jetson_pss_plus_nvmap_estimate", "jetson_pss_and_nvmap_v3"].includes(accounting)) return "jetson_local_pss";
   if (accounting === "nvidia_pss_and_vram") return "nvidia";
   return value.source || ""; // Compatibility for historical records without a metric definition.
 }
@@ -59,6 +59,7 @@ export function telemetryPlatform(raw: unknown): string {
 /** 1.0 `:785-856`。四套口径：macOS 内存压力 / apple_unified / orin PSS / 默认 NVIDIA。 */
 export function gpuMetricRows(rawPhase: unknown = {}): MetricRow[] {
   const phase = dict(rawPhase);
+  if (resourceProtocol(phase)) return resourceMemoryRows(phase, true);
   if (phase.memory_pressure) {
     const mp = dict(phase.memory_pressure);
     const used = dict(phase.memory_used_gib);
@@ -184,6 +185,7 @@ export function gpuMetricsView(run: unknown): Dict {
   const fill = (phaseObj: Dict): Dict => {
     const keys = [
       "model_process_footprint_mib", "model_process_mapped_weights_mib", "product_stack_footprint_mib", "product_stack_mapped_weights_mib",
+      "model_process_gpu_memory_mib", "product_stack_gpu_memory_mib", "device_gpu_memory_mib", "cpu_utilization_pct",
       "model_process_memory_used_mib",
       "model_process_system_memory_used_mib",
       "gpu_allocated_unified_memory_mib",
@@ -199,7 +201,7 @@ export function gpuMetricsView(run: unknown): Dict {
       "kv_cache_usage_pct",
       "kv_cache_used_tokens",
     ];
-    const out: Dict = { memory_accounting: live.latest?.memory_accounting, memory_complete: live.latest?.memory_complete,
+    const out: Dict = { protocol_version: live.latest?.protocol_version || live.protocol_version, resource_metrics: live.latest?.resource_metrics, memory_accounting: live.latest?.memory_accounting, memory_complete: live.latest?.memory_complete,
       power_scope: live.latest?.power_scope, power_rail: live.latest?.power_rail,
       system_memory_scope: live.latest?.system_memory_scope,
       sampling: live.sampling, memory_observation_version: live.latest?.memory_observation_version,
@@ -284,6 +286,7 @@ export function telemetryObservationRows(run: unknown): MetricRow[] {
  * `effectivePeak` 对「老记录只有 latest 没有 peak」做回退 —— 这是本函数最容易漏的回退。
  */
 export function liveTelemetryRows(run: unknown): MetricRow[] {
+  if (resourceProtocol(run)) return resourceMemoryRows(dict(telemetryLiveState(run).latest));
   const r = dict(run);
   const live = dict(r.telemetry_live);
   const latest = dict(live.latest);
@@ -464,6 +467,7 @@ export function telemetryChart(run: unknown): TelemetryChartData | null {
  * 2.0 此前三处标签全部写死成 VmRSS，等于把所有 run 都当成旧口径。
  */
 export function jetsonUnifiedFromRun(run: unknown): boolean {
+  if (resourceProtocol(run)) return false;
   const r = dict(run);
   if (dict(r.memory_profile).scope === "host_smaps_rss_plus_gpu_uma") return true;
   const gpu = dict(dict(r.phases).gpu_metrics);
@@ -479,6 +483,7 @@ export function jetsonUnifiedFromRun(run: unknown): boolean {
 
 /** 1.0 `:1126-1150`。**故意不含 apple_unified**：Orin 判据是 `isOrin = isApple || ...`。 */
 export function liveTelemetryPhaseRows(run: unknown): MetricRow[] {
+  if (resourceProtocol(run)) return [];
   const r = dict(run);
   const live = telemetryLiveState(run);
   const source = telemetryPlatform(live) || r.telemetry_source || telemetryPlatform(dict(dict(r.phases).gpu_metrics));
@@ -674,10 +679,10 @@ export function keyMetricRows(run: unknown, summary: unknown): KeyMetric[] {
   const platform = telemetryPlatform(gpu);
   const isUnified = platform === "apple_unified";
   const isOrin = ["orin_ssh_pss", "jetson_local_pss"].includes(platform);
-  const processMemory = isUnified || isOrin
+  const processMemory = resourceProtocol(gpu) || isUnified || isOrin
     ? dict(gpu.model_process_system_memory_used_mib).peak
     : dict(gpu.model_process_memory_used_mib).peak;
-  const processMemoryNote = isUnified
+  const processMemoryNote = resourceProtocol(gpu) ? "主模型进程内存的采样峰值；GPU 分配另计" : isUnified
     ? gpu.memory_accounting === "apple_footprint_resident_v2"
       ? "主模型驻留内存采样峰值（估计） · 整组PID去重：Dirty − Swapped + Clean + Reclaimable"
       : "主模型占用采样峰值（footprint+权重映射）· 容量估计，映射不保证驻留，非 GPU 专属显存"
@@ -715,7 +720,7 @@ export function keyMetricRows(run: unknown, summary: unknown): KeyMetric[] {
       note: `模型显式交付的图片里属于 GT 的比例 · ${s.image_retrieval_metric_count ?? 0} 题含图片 GT · 这是交付口径，与检索口径的 R@K 不可换算`,
     },
     {
-      label: isUnified || isOrin ? "主模型内存占用" : "模型进程显存",
+      label: resourceProtocol(gpu) || isUnified || isOrin ? "主模型内存占用" : "模型进程显存",
       value: fmtMemory(processMemory),
       note: processMemoryNote,
     },
@@ -760,4 +765,29 @@ export function tokenDistributionRows(summary: unknown): MetricRow[] {
 /** 1.0 `:1332-1334`。缺字段回 `0`（不是 `-`）。 */
 export function tokenDistributionCount(summary: unknown): number {
   return dict(summary).llm_context_samples_count ?? 0;
+}
+
+
+export const RESOURCE_PROTOCOL = "photobench-resource-telemetry-v1";
+export function resourceProtocol(raw: unknown): boolean {
+  const value = dict(raw);
+  const live = dict(value.telemetry_live);
+  return [value.protocol_version, dict(value.latest).protocol_version, live.protocol_version,
+    dict(live.latest).protocol_version, dict(dict(value.phases).gpu_metrics).protocol_version]
+    .includes(RESOURCE_PROTOCOL);
+}
+export const RESOURCE_MEMORY_FIELDS = [
+  ["主模型内存", "model_process_system_memory_used_mib"],
+  ["产品内存", "product_stack_memory_mib"],
+  ["整机内存", "system_memory_used_mib"],
+  ["主模型 GPU 内存", "model_process_gpu_memory_mib"],
+  ["产品 GPU 内存", "product_stack_gpu_memory_mib"],
+  ["整机／整卡 GPU 内存", "device_gpu_memory_mib"],
+] as const;
+function resourceMemoryRows(raw: Dict, peak = false): MetricRow[] {
+  return RESOURCE_MEMORY_FIELDS.map(([name, key]) => [
+    peak ? `${name}采样峰值` : name,
+    fmtMemory(peak ? dict(raw[key]).peak : raw[key]),
+    peak ? "来自全部有效采样；缺失时未记录" : "GPU 分配与进程内存分开统计；产品包含主模型",
+  ]);
 }
