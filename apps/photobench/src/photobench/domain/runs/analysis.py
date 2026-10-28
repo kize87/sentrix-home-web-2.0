@@ -802,12 +802,39 @@ def annotate_model_calls(model_calls: Sequence[Any], execution_trace: Sequence[A
 def bind_tool_calls_to_model_rounds(
     tool_trace: Sequence[Any], retrieval_trace: Sequence[Any], model_calls: Any = None
 ) -> list[dict[str, Any]]:
-    """1.0 ``:3838``。按 step ID 优先、历史 run 退回按顺序对齐工具与模型轮次。"""
+    """显式父步骤只在同一对话轮内绑定；缺少标识的旧记录保留顺序对齐。"""
     bound = [dict(trace) for trace in tool_trace if isinstance(trace, dict)]
     if not bound:
         return bound
     calls = [call for call in model_calls if isinstance(call, dict)] if isinstance(model_calls, list) else []
     model_call_count = len(calls) if calls else int(model_calls or 0)
+    if calls and any(trace.get("parent_step_id") or trace.get("parent_call_id") for trace in bound):
+        for trace in bound:
+            candidates = [
+                index
+                for index, call in enumerate(calls)
+                if call.get("conversation_turn", 0) == trace.get("conversation_turn", 0)
+                and call.get("call_type") != "tool_internal"
+                and (
+                    call.get("call_id") == trace["parent_call_id"]
+                    if trace.get("parent_call_id")
+                    else bool(trace.get("parent_step_id"))
+                    and str(call.get("step_id")) == str(trace["parent_step_id"])
+                )
+            ]
+            successful = [
+                index
+                for index in candidates
+                if calls[index].get("status") not in {"error", "failed", "cancelled"}
+                and not calls[index].get("error")
+            ]
+            if len(successful) == 1:
+                trace["model_call_index"] = successful[0]
+                trace["round_binding_source"] = "step_id"
+            elif trace.get("parent_step_id") or trace.get("parent_call_id"):
+                trace.pop("model_call_index", None)
+                trace["round_binding_source"] = "unresolved"
+        return bound
     call_index_by_step: dict[tuple[Any, str], int] = {}
     for index, call in enumerate(calls):
         if not call.get("step_id"):
@@ -1750,10 +1777,26 @@ def run_list_entry(state: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def conversation_projection(item: dict[str, Any]) -> dict[str, Any]:
+    """从已保存的对话生成展示摘要，保留原 question 和执行记录。"""
+    turns = [turn for turn in item.get("runtime_turns") or [] if isinstance(turn, dict)]
+    planned = [turn for turn in item.get("conversation") or [] if isinstance(turn, dict)]
+    messages = turns or planned
+    return {
+        "display_question": (messages[0].get("message") if messages else None) or item.get("question"),
+        "conversation_turn_count": len(messages) or item.get("conversation_turn_count") or 1,
+        "conversation_context_mode": item.get("conversation_context_mode"),
+        "agent_status": item.get("agent_status")
+        or item.get("turn_status")
+        or (turns[-1].get("agent_status") if turns else None),
+    }
+
+
 def item_summary(item: dict[str, Any], index: int, review: dict[str, Any] | None = None) -> dict[str, Any]:
     """1.0 ``:6559`` 的 ``_item_summary``。"""
     item = {**item, **retrieval_metric_projection(item)}
     judge = judge_projection(item.get("judge"))
+    media_counts = item.get("media_retrieval_counts") or {}
     return {
         "index": index,
         "qa_id": item.get("qa_id"),
@@ -1779,8 +1822,10 @@ def item_summary(item: dict[str, Any], index: int, review: dict[str, Any] | None
         "video_retrieval_recall": item.get("video_retrieval_recall"),
         "video_retrieval_precision": item.get("video_retrieval_precision"),
         "video_retrieval_f1": item.get("video_retrieval_f1"),
-        "matched_count": len(item.get("matched_file_names") or []),
-        "ground_truth_count": len(item.get("retrieval_media_refs") or item.get("retrieval_image_ids") or []),
+        "matched_count": media_counts.get("matched", len(item.get("matched_file_names") or [])),
+        "ground_truth_count": media_counts.get(
+            "gt", len(item.get("retrieval_media_refs") or item.get("retrieval_image_ids") or [])
+        ),
         "ground_truth_image_count": len(item.get("retrieval_image_ids") or []),
         "ground_truth_video_count": len(item.get("retrieval_video_ids") or []),
         "judge": {
@@ -1799,7 +1844,7 @@ def item_summary(item: dict[str, Any], index: int, review: dict[str, Any] | None
         "task_judges": item.get("task_judges") or [],
         "evidence_judge": item.get("evidence_judge") or {},
         "agent_stability": item.get("agent_stability") or {},
-        "agent_status": item.get("agent_status"),
+        **conversation_projection(item),
         "termination_reason": item.get("termination_reason"),
         "has_error": bool(item.get("error")),
         "deterministic_delivery": ((item.get("guard_debug") or {}).get("deterministic_delivery") or {}),
@@ -1815,6 +1860,7 @@ def hydrate_qa_metadata(item: dict[str, Any], qa_metadata: dict[str, dict[str, A
     """1.0 ``:4919`` 的 ``_hydrate_qa_metadata``；``qa_metadata`` 从 ``self`` 变成入参。"""
     metadata = qa_metadata.get(str(item.get("qa_id") or "")) or {}
     hydrated = {**metadata, **item}
+    hydrated.update(conversation_projection(hydrated))
     tag_fields = {
         "task_type": "task",
         "question_type": "question",

@@ -1050,3 +1050,20 @@ details.qa-results-body[open] > summary::before { content:"▾ "; }
 .model-tool-node-body { padding:6px 8px 8px; border-top:1px solid #eef1f6; }
 
 .gpu-result-card .resource-status-metrics { grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); margin:7px 0 10px; }
+
+/* 用户轮次是主层级，模型和工具只在该轮下展开。 */
+.qa-dialogue-badge { flex:none; padding:3px 8px; border-radius:5px; background:#edf1ff; color:#4059a7; font-size:12px; }
+.debug-turn-full > summary { flex-wrap:wrap; align-items:baseline; gap:6px 12px; padding:10px; background:#edf2fb; border-radius:6px; }
+.debug-turn-full > summary strong { flex:none; font-size:13px; }
+.debug-turn-full > summary > span:first-of-type { flex:1; min-width:220px; color:#243552; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.debug-turn-full > summary > span:last-of-type { color:#68748b; font-size:11px; }
+.trace-context-note { display:flex; flex-wrap:wrap; gap:8px 16px; margin:8px 10px; color:#68748b; font-size:11px; }
+.trace-context-note code { overflow-wrap:anywhere; }
+.trace-timeline { display:flex; flex-direction:column; gap:5px; padding:2px 10px 10px; }
+.trace-timeline .debug-step > summary strong { flex:none; }
+.trace-timeline .debug-step > summary { flex-wrap:wrap; }
+.trace-timeline .model-call-node > summary, .trace-timeline .model-tool-node > summary { min-height:36px; font-size:12px; }
+.trace-policy-refusal { padding:10px; margin:8px 10px; color:#395279; background:#edf3fa; border-radius:6px; }
+.trace-progress-events { padding:10px; }
+.trace-progress-events pre { max-height:420px; overflow:auto; }
+.trace-execution > summary { margin:8px 0; padding:8px 10px; color:#40547a; cursor:pointer; font-size:12px; }

@@ -129,6 +129,10 @@ class JudgeObservation(BaseModel):
 
 class RunItemObservation(BaseModel):
     model_config = ConfigDict(extra="allow")
+    display_question: str | None = None
+    conversation_turn_count: int | None = None
+    conversation_context_mode: str | None = None
+    agent_status: str | None = None
     task_type: str | list[str] | None = None
     question_type: str | list[str] | None = None
     expected_action: str | None = None

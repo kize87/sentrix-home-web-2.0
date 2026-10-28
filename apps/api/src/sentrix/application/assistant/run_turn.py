@@ -873,6 +873,7 @@ class RunTurn:
                 "step_id": step_id,
                 "call_type": call_type,
                 "attempt": record["attempt"],
+                "call_id": record["call_id"],
                 "started_at": datetime.now(UTC).isoformat(),
                 "status": "error",
                 "messages": chat_messages_payload(messages),
@@ -1616,6 +1617,8 @@ class RunTurn:
                 "call_id": step_id,
             }
         )
+        if review.model_call is not None:
+            session.model_calls.append(dict(review.model_call))
         if session.include_debug and review.debug_call is not None:
             session.add_debug_call(review.debug_call)
         if not review.blocks:

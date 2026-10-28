@@ -2,10 +2,8 @@ import { taxonomyLabel, abilityLabel } from "../../lib/qaTaxonomy.ts";
 /**
  * 单题卡（列表项 + 展开体）。移植 1.0 `App.vue:3460-3674`。
  *
- * 展开体顺序照搬 1.0：元数据标签 → 本题证据链 → 多轮对话卡 → 正文两栏
- * （模型回答 / 工具召回图 / 模型使用图 / 参考答案 / 检索 GT / Judge 说明）→
- * `qa-performance`（时延 + Agent Loop 树 + 执行结果）→ Agent2 面板 → 调试轨迹 →
- * JUDGE 输入触发 → 人工复核。
+ * 详情先展示各轮对话、执行轨迹与评分，再展示媒体、GT及评分说明。
+ * 调用性能作为折叠入口；每轮证据账本归入该轮执行轨迹。
  *
  * **两个媒体区是两件事**（1.0 `:703-711` 的注释原文）：
  *   工具召回图片 `toolRecallMedia`（检索候选） / 模型使用图片 `itemEvidenceMedia`（显式交付，
@@ -36,9 +34,7 @@ import { isVideoMedia, imageUrl, pauseVideoAtEvidenceFrame } from "../../api/med
 import { itemLayerChain } from "../../lib/graphs.ts";
 import { itemTimingBreakdown, qaLatencySegments } from "../../lib/trace.ts";
 
-import { Agent2SummaryPanel } from "./Agent2SummaryPanel.tsx";
 import { AgentLoopTree } from "./AgentLoopTree.tsx";
-import { ConversationCard } from "./ConversationCard.tsx";
 import { DebugTracePanel } from "./DebugTracePanel.tsx";
 import { ExecutionStatusPanel } from "./ExecutionStatusPanel.tsx";
 import { hasToolTrace, judgeReason, segmentStyle } from "./qaShared.ts";
@@ -121,11 +117,12 @@ export function QaItemCard({
     <article className={`qa-item${open ? " open" : ""}`}>
       <button className="item-head qa-toggle" type="button" onClick={onToggle}>
         <span className="item-idx">{String(s.index + 1).padStart(2, "0")}</span>
-        <strong>{s.question}</strong>
+        <strong>{s.display_question || conversationTurns(detail)[0]?.message || s.question}</strong>
+        {Number(s.conversation_turn_count || conversationTurns(detail).length) > 1 ? <span className="qa-dialogue-badge">{s.conversation_turn_count || conversationTurns(detail).length} 轮对话</span> : null}
         <span className={`score ${scoreClass(s.judge?.score)} judge-round-${judgeRoundState(s, activeRejudge)}`}>
           {judgeScoreLabel(s, activeRejudge)}
         </span>
-        {Number(s.ground_truth_count) > 0 && (
+        {Number(s.ground_truth_count) > 0 && summary.retrieval_metrics_applicable !== false && (
           <span className="muted small">
             精确率 {fmtPct(s.retrieval_precision)} · 召回率 {fmtPct(s.retrieval_recall)} · F1{" "}
             {fmtPct(s.retrieval_f1)} · 命中 {esc(s.matched_count)}/{esc(s.ground_truth_count)}
@@ -211,6 +208,7 @@ function QaItemDetail({
           </span>
         ))}
       </div>
+      <DebugTracePanel detail={detail} />
       <section className="qa-layer-chain">
         <div className="qa-layer-chain-head">
           <strong>本题证据链</strong>
@@ -234,7 +232,6 @@ function QaItemDetail({
           ))}
         </div>
       </section>
-      <ConversationCard detail={detail} />
       <div className="item-body">
         <div>
           <h4>{turns.length > 1 ? "最终一轮回答" : "模型回答"}</h4>
@@ -347,19 +344,19 @@ function QaItemDetail({
       <section className="qa-performance">
         <div className="timing-breakdown">
           <span>
-            端到端 <b>{fmtMs(timing.wall_clock_ms)}</b>
+            {Number(detail.metrics_contract_version) === 2 ? "Agent 请求墙钟" : "端到端（旧口径）"} <b>{fmtMs(timing.wall_clock_ms)}</b>
           </span>
-          <span>
+          {Number(detail.metrics_contract_version) !== 2 ? <span>
             Agent 总耗时 <b>{fmtMs(timing.agent_wall_ms)}</b>
+          </span> : null}
+          <span>
+            模型累计（不含工具内） <b>{fmtMs(timing.model_ms)}</b>
           </span>
           <span>
-            模型 <b>{fmtMs(timing.model_ms)}</b>
+            工具累计 <b>{toolTrace ? fmtMs(timing.tool_ms) : "未记录"}</b>
           </span>
           <span>
-            工具 <b>{toolTrace ? fmtMs(timing.tool_ms) : "未记录"}</b>
-          </span>
-          <span>
-            Judge <b>{fmtMs(timing.judge_ms)}</b>
+            独立评分 Judge <b>{fmtMs(timing.judge_ms)}</b>
           </span>
           <span>
             其他 <b>{toolTrace ? fmtMs(timing.other_ms) : "未记录"}</b>
@@ -368,10 +365,10 @@ function QaItemDetail({
         {qaSegments.length > 0 && (
           <div className="latency-composition qa-latency-composition">
             <div className="latency-composition-head">
-              <strong>QA 样本时延组成</strong>
+              <strong>{Number(detail.metrics_contract_version) === 2 ? "Agent 请求耗时分布" : "QA 样本时延组成（旧口径）"}</strong>
               <span>{fmtMs(timing.wall_clock_ms)}</span>
             </div>
-            <div className="latency-bar" role="img" aria-label="QA 样本时延组成">
+            <div className="latency-bar" role="img" aria-label={Number(detail.metrics_contract_version) === 2 ? "Agent 请求耗时分布" : "QA 样本时延组成"}>
               {qaSegments.map((segment, segmentIndex) => (
                 <span
                   key={`${segment.kind}-${segmentIndex}`}
@@ -393,11 +390,11 @@ function QaItemDetail({
             </div>
           </div>
         )}
-        <AgentLoopTree detail={detail} modelLabel={modelLabel} />
+        <details className="qa-detail-block"><summary>调用性能明细 · Token / TTFT / 工具耗时</summary>
+          <AgentLoopTree detail={detail} modelLabel={modelLabel} />
+        </details>
         <ExecutionStatusPanel detail={detail} />
       </section>
-      <Agent2SummaryPanel detail={detail} />
-      <DebugTracePanel detail={detail} />
       <div className="item-footer">
         <button className="judge-details-trigger" type="button" onClick={() => onOpenJudgeInput(detail)}>
           JUDGE 模型输入 <span>↗</span>

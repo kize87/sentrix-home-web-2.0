@@ -769,6 +769,9 @@ def test_l3_verifies_an_unbound_count_and_allows_a_corrected_answer(env, monkeyp
 
     assert "2 张" in result.answer
     assert len(model.claim_calls) == 1
+    calls = _turns.get(turn_id).trace["model_calls"]
+    assert len([call for call in calls if call["call_type"] == "claim_verifier"]) == 1
+    assert len(calls) == len(model.calls) + len(model.planner_calls) + len(model.claim_calls)
     assert result.termination_reason is TerminationReason.ANSWERED_WITH_GAP
 
 

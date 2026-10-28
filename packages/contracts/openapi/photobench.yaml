@@ -2520,6 +2520,26 @@ components:
       title: QaTaxonomyResponse
     RunItemObservation:
       properties:
+        display_question:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Display Question
+        conversation_turn_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Conversation Turn Count
+        conversation_context_mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Conversation Context Mode
+        agent_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Agent Status
         task_type:
           anyOf:
           - type: string

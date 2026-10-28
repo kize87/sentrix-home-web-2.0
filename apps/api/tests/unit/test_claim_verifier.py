@@ -91,3 +91,25 @@ def test_claim_verifier_fails_open_on_model_error():
 
     assert review.verdict is ClaimVerdict.AMBIGUOUS
     assert not review.blocks
+
+
+def test_claim_call_metrics_are_recorded_without_debug():
+    model = _ScriptedModel('{"verdict":"supported"}')
+    review = ClaimVerifier(model).review(
+        query="几张", claim=high_risk_claims("3 张照片")[0], facts=[], requirement=None
+    )
+    assert review.debug_call is None
+    assert review.model_call["call_type"] == "claim_verifier"
+    assert review.model_call["status"] == "complete"
+    assert review.model_call["duration_ms"] >= 0
+
+
+def test_claim_failure_preserves_metrics_and_debug_error():
+    review = ClaimVerifier(_ScriptedModel(RuntimeError("endpoint down"))).review(
+        query="几张", claim=high_risk_claims("3 张照片")[0], facts=[], requirement=None, include_debug=True
+    )
+    assert review.model_call["status"] == "error"
+    assert review.model_call["error"] == "endpoint down"
+    assert review.model_call["duration_ms"] >= 0
+    assert review.debug_call["duration_ms"] == review.model_call["duration_ms"]
+    assert review.debug_call["error"] == "endpoint down"

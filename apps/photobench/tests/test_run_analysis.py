@@ -23,6 +23,22 @@ def _item(**over: object) -> dict:
     return item
 
 
+@pytest.mark.parametrize(
+    ("counts", "legacy_matches", "expected"),
+    [(None, ["a.jpg"], 1), ({"matched": 1, "gt": 1}, [], 1), ({"matched": 0, "gt": 1}, ["a.jpg"], 0)],
+)
+def test_item_summary_uses_stored_media_counts(counts, legacy_matches, expected):
+    item = _item(
+        media_retrieval_counts=counts,
+        matched_file_names=legacy_matches,
+        retrieval_media_refs=[{"media_type": "image", "media_id": "a.jpg"}],
+    )
+    summary = analysis.item_summary(item, 0)
+    assert summary["matched_count"] == expected
+    assert summary["ground_truth_count"] == 1
+    assert item["media_retrieval_counts"] == counts
+
+
 # ---- Judge 一致性 ---------------------------------------------------------
 
 
@@ -553,3 +569,39 @@ def test_recomputed_summary_drops_saved_refusal_candidate_and_ranking_values():
     }
     assert analysis.effective_summary(state)["candidate_retrieval_recall_micro"] is None
     assert analysis.effective_summary(state)["image_ranking"] is None
+
+
+def test_multiturn_summary_uses_first_message_without_overwriting_question():
+    item = {
+        "question": "是国庆在河北那次。",
+        "turn_status": "complete",
+        "runtime_turns": [
+            {"index": 0, "message": "找婚礼舞台留影"},
+            {"index": 1, "message": "是国庆在河北那次。"},
+        ],
+        "conversation_context_mode": "shared_conversation_id",
+    }
+    summary = analysis.item_summary(item, 8)
+    assert summary["display_question"] == "找婚礼舞台留影"
+    assert summary["conversation_turn_count"] == 2
+    assert summary["agent_status"] == "complete"
+    assert summary["question"] == item["question"]
+    assert analysis.hydrate_qa_metadata(item, {})["display_question"] == summary["display_question"]
+    assert "display_question" not in item
+
+
+def test_tool_binding_uses_successful_attempt_in_same_turn_only():
+    calls = [
+        {"conversation_turn": 0, "step_id": "step_1", "status": "complete"},
+        {"conversation_turn": 1, "step_id": "step_1", "status": "error"},
+        {"conversation_turn": 1, "step_id": "step_1", "status": "complete"},
+    ]
+    tools = [
+        {"conversation_turn": 1, "parent_step_id": "step_1", "model_call_index": 1},
+        {"conversation_turn": 2, "parent_step_id": "step_1", "model_call_index": 0},
+    ]
+    result = analysis.bind_tool_calls_to_model_rounds(tools, [], calls)
+    assert result[0]["model_call_index"] == 2
+    assert "model_call_index" not in result[1]
+    assert result[1]["round_binding_source"] == "unresolved"
+    assert tools[0]["model_call_index"] == 1

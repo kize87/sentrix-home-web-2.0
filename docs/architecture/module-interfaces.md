@@ -1281,3 +1281,8 @@ system v2 counts non-free physical RAM including caches. Domain owns formulas,
 infrastructure owns collection, application preserves observations and TTL.
 History retains original accounting; device/allocation estimates are not
 relabeled as physically deduplicated totals. See photobench-metrics-contract.md.
+
+
+### 2026-10-29 PhotoBench 对话与调用轨迹
+
+只读QA摘要增加display_question、conversation_turn_count、conversation_context_mode，原question保留；状态补读已存turn_status。工具按同轮父调用/步骤绑定，重试IO按attempt精确对应。ClaimReview增加可选model_call指标，RunTurn统一记录成功与失败核验调用；不改变任务决策。2.0 Agent墙钟与外部Judge耗时独立。契约、历史兼容边界及验证见[轨迹对齐说明](../refactor/2026-10-29-agent-trace-alignment.md)。

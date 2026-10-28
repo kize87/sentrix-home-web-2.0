@@ -9,6 +9,7 @@
  * 这里不做任何截断或“友好化”：复盘要看到模型真正看到的东西。字段缺失时明确显示
  * 「未记录」，而不是用摘要冒充原文。
  */
+import { fmtMs } from "../../lib/format.ts";
 import type { Dict } from "../../lib/agentTrace.ts";
 import {
   callContent,
@@ -150,9 +151,9 @@ export function ModelCallView({ call, title }: ModelCallViewProps) {
       <summary>
         <strong>{title || callLabel(call.call_type)}</strong>
         {call.step_id ? <span>步骤 {String(call.step_id)}</span> : null}
-        {call.attempt != null ? <span>第 {String(call.attempt)} 次</span> : null}
+        {call.attempt != null ? <span>请求序号 {String(call.attempt)}</span> : null}
         <span className={`model-call-status${call.error ? " failed" : ""}`}>{callStatus(call)}</span>
-        {call.duration_ms != null ? <span>{String(call.duration_ms)} ms</span> : null}
+        {call.duration_ms != null ? <span>{fmtMs(call.duration_ms)}</span> : null}
         <span>
           {String(call.prompt_tokens ?? "?")} / {String(call.completion_tokens ?? "?")} tokens
         </span>
@@ -164,7 +165,7 @@ export function ModelCallView({ call, title }: ModelCallViewProps) {
         </section>
         <section>
           <h5>模型可见工具 · {tools.length}</h5>
-          <ToolSpecs tools={tools} />
+          {Array.isArray(call.tools) ? <ToolSpecs tools={tools} /> : <p className="muted small">可用工具列表未记录。</p>}
         </section>
         <section>
           <h5>模型原始输出</h5>

@@ -68,6 +68,8 @@ export function segmentStyle(segment: LatencySegment, segments: LatencySegment[]
  * 逐题摘要里模板直接读、但 `RunItemSummary` 未收窄的字段（1.0 无类型，字段都在响应里）。
  */
 export interface QaSummaryView {
+  display_question?: string;
+  conversation_turn_count?: number;
   index: number;
   question?: string;
   judge?: Judge;

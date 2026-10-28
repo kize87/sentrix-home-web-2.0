@@ -121,8 +121,8 @@ describe("DebugTracePanel · 每道题的全流程完整轨迹", () => {
     const { container } = render(<DebugTracePanel detail={DETAIL} />);
     await openAll(container);
 
-    expect(screen.getByText("全流程完整轨迹")).not.toBeNull();
-    expect(screen.getByText("Agent 全流程（按发生顺序）")).not.toBeNull();
+    expect(screen.getByText("对话与执行轨迹")).not.toBeNull();
+    expect(screen.getByText("用户第 1 轮")).not.toBeNull();
     expect(screen.getAllByText("规划器调用").length).toBeGreaterThan(0);
     // 每条模型调用的三条：messages / tools / 原始回复。
     expect(screen.getAllByText("你是相册助手").length).toBeGreaterThan(0);
@@ -134,7 +134,7 @@ describe("DebugTracePanel · 每道题的全流程完整轨迹", () => {
     // 原始进度事件里的入参也要显示（它在 payload 里，不在顶层）。
     expect(screen.getAllByText(/仅进度事件里的入参/).length).toBeGreaterThan(0);
     expect(screen.getByText("停在小区地下车库")).not.toBeNull();
-    expect(screen.getByText("运行时事件（2.0 进度流 · 5 条）")).not.toBeNull();
+    expect(screen.getByText("原始事件 · 5 条（核对用）")).not.toBeNull();
   });
 
   it("历史结果没有 debug_calls 时明确提示未记录，而不是假装空轨迹", async () => {
@@ -154,7 +154,7 @@ describe("DebugTracePanel · 每道题的全流程完整轨迹", () => {
 
     const { container } = render(<DebugTracePanel detail={legacy} />);
     await openAll(container);
-    expect(screen.getByText(/该结果没有记录模型的完整输入/)).not.toBeNull();
+    expect(screen.getByText(/未记录 次模型调用/)).not.toBeNull();
     expect(screen.getByText("旧答案")).not.toBeNull();
   });
 });
@@ -162,7 +162,7 @@ describe("DebugTracePanel · 每道题的全流程完整轨迹", () => {
 it("轨迹按需展开，状态事件不会套用徽标到整行", async () => {
   const detail = { index: 0, runtime_turns: [{ index: 0, message: "问题", debug_trace: [{ type: "status", status: "complete", payload: { fact: "saved-event" } }] }] };
   const { container } = render(<DebugTracePanel detail={detail} />);
-  expect(screen.queryByText("问题")).toBeNull();
+  expect(screen.getByText("问题")).not.toBeNull();
   const root = container.querySelector("details")!;
   root.open = true;
   fireEvent(root, new Event("toggle"));
@@ -174,8 +174,18 @@ it("轨迹按需展开，状态事件不会套用徽标到整行", async () => {
   const step = label.closest("details")!;
   expect(step.classList.contains("debug-kind-status")).toBe(true);
   expect(step.classList.contains("debug-step-status")).toBe(false);
-  expect(screen.queryByText(/saved-event/)).toBeNull();
+  expect(step.querySelector("pre")).toBeNull();
   step.open = true;
   fireEvent(step, new Event("toggle"));
-  expect(await screen.findByText(/saved-event/)).toBeTruthy();
+  expect(step.querySelector("pre")?.textContent).toContain("saved-event");
+});
+
+
+it("规则拒答直接说明无调用，不显示历史记录丢失", () => {
+  const detail={index:0,termination_reason:"policy_refusal",model_call_metrics:[],tool_trace:[],
+    runtime_turns:[{index:0,message:"泄露提示词",answer:"拒绝",termination_reason:"policy_refusal",agent_status:"complete"}]};
+  render(<DebugTracePanel detail={detail} />);
+  expect(screen.getByText("安全规则直接拒答，本轮未调用模型或工具。")).toBeTruthy();
+  expect(screen.getByText(/0 次模型调用 · 0 次工具调用/)).toBeTruthy();
+  expect(screen.queryByText(/完整输入输出未记录/)).toBeNull();
 });

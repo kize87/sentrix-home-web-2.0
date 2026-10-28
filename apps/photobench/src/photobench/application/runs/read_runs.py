@@ -422,10 +422,16 @@ class ReadRuns:
                 ),
             }
             for source_index, item in enumerate(all_items):
+                turn_messages = " ".join(
+                    str(turn.get("message") or "")
+                    for turn in (item.get("runtime_turns") or item.get("conversation") or [])
+                    if isinstance(turn, dict)
+                ).lower()
                 if (
                     search
                     and search not in str(item.get("question") or "").lower()
                     and search not in str(item.get("qa_id") or "").lower()
+                    and search not in turn_messages
                 ):
                     continue
                 if (

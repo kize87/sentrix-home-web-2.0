@@ -2,7 +2,7 @@
 // trace / 时延 / 调试轨迹的解析与格式化（1.0 :1340-1809）。
 //
 // 口径纪律：1.0 里 `null` / `NaN` / `0` / `""` / `undefined` 在每个分支的判定各不相同，
-// 逐条照搬、不统一。每个函数尾注 1.0 行号；本模块**不构造任何图数据**。
+// 保留1.0字段读取；2.0按同轮调用身份和独立Agent墙钟解释，不补造原始数据。
 //
 // 共享的纯格式化函数（`callType` / `callTypeLabel` / `fmtMs` / `average`）已由
 // `lib/format.ts` 移植（1.0 :334 / :1402 / :1444 / :1447），这里 import 复用，
@@ -294,50 +294,40 @@ export function toolExecutionSteps(item: unknown): Dict[] {
 // 1.0 :1514-1545 工具 ↔ 调用绑定（最易错）
 // ---------------------------------------------------------------------------
 
-/** 1.0 `:1514-1523` —— 先按 `step_id`（+轮）精确查，再退化为只按 `step_id`。 */
+/** 同轮父步骤必须唯一匹配有效尝试；不跨用户轮次绑定。 */
 export function callIndexForStep(item: unknown, stepId: unknown, conversationTurn: unknown): number | null {
   if (!stepId) return null;
   const calls = itemCallMetrics(item);
-  const exact = calls.findIndex(
-    (call) =>
+  const matches = calls.map((call, index) => ({ call, index })).filter(
+    ({ call }) =>
       String(call.step_id || "") === String(stepId) &&
-      (conversationTurn == null ||
-        conversationTurnNumber(call.conversation_turn) === conversationTurnNumber(conversationTurn)),
+      conversationTurnNumber(call.conversation_turn) === conversationTurnNumber(conversationTurn) &&
+      callType(call) !== "tool_internal" &&
+      !["error", "failed", "cancelled"].includes(String(call.status)) && !call.error,
   );
-  if (exact >= 0) return exact;
-  const fallback = calls.findIndex((call) => String(call.step_id || "") === String(stepId));
-  return fallback >= 0 ? fallback : null;
+  return matches.length === 1 ? matches[0].index : null;
 }
 
-/**
- * 1.0 `:1524-1538` —— 四级回退，顺序**不可改**：
- *   1. `trace.parent_step_id` 直接查已存调用；
- *   2. 同轮 tool_trace 里的序号 `localTraceIndex` 选中同轮第 N 个 `execution_trace` 工具步；
- *   3. 用该工具步的 `parent_step_id` 反查调用（与 2 同一表达式，先选步再查父）；
- *   4. `trace.model_call_index`（整数才认）。
- * 1.0 把「同轮 trace 序号」与「execution_trace 的 parent」合并在同一分支里。
- */
-export function normalizedToolCallIndex(item: unknown, trace: unknown, traceIndex: number): number | null {
+/** 按父调用、父步骤或已存绑定定位；执行轨迹必须有相同工具ID。 */
+export function normalizedToolCallIndex(item: unknown, trace: unknown, _traceIndex: number): number | null {
   const traceObj = dict(trace);
+  const calls = itemCallMetrics(item);
+  if (traceObj.parent_call_id) {
+    const index = calls.findIndex(call => call.call_id === traceObj.parent_call_id &&
+      conversationTurnNumber(call.conversation_turn) === conversationTurnNumber(traceObj.conversation_turn));
+    return index >= 0 ? index : null;
+  }
   const parentStepId = traceObj.parent_step_id;
   const parentIndex = callIndexForStep(item, parentStepId, traceObj.conversation_turn);
-  if (parentIndex != null) return parentIndex;
-  const sameTurnTraces = itemToolTrace(item).filter(
-    (candidate) =>
-      traceObj.conversation_turn == null ||
-      conversationTurnNumber(dict(candidate).conversation_turn) === conversationTurnNumber(traceObj.conversation_turn),
-  );
-  const localTraceIndex = sameTurnTraces.indexOf(traceObj);
-  const sameTurnSteps = toolExecutionSteps(item).filter(
-    (step) =>
-      traceObj.conversation_turn == null ||
-      conversationTurnNumber(dict(step).conversation_turn) === conversationTurnNumber(traceObj.conversation_turn),
-  );
-  const executionStep = sameTurnSteps[localTraceIndex >= 0 ? localTraceIndex : traceIndex];
-  const executionIndex = callIndexForStep(item, dict(executionStep).parent_step_id, traceObj.conversation_turn);
-  if (executionIndex != null) return executionIndex;
+  if (parentStepId) return parentIndex;
   const savedIndex = finiteMetric(traceObj.model_call_index);
-  return savedIndex != null && Number.isInteger(savedIndex) ? savedIndex : null;
+  if (savedIndex != null && Number.isInteger(savedIndex) && calls[savedIndex] &&
+    conversationTurnNumber(calls[savedIndex].conversation_turn) === conversationTurnNumber(traceObj.conversation_turn)) return savedIndex;
+  const id = traceObj.tool_call_id ?? traceObj.step_id;
+  const steps = id ? toolExecutionSteps(item).filter(step =>
+    (step.tool_call_id ?? step.step_id) === id &&
+    conversationTurnNumber(step.conversation_turn) === conversationTurnNumber(traceObj.conversation_turn)) : [];
+  return steps.length === 1 ? callIndexForStep(item, steps[0].parent_step_id, traceObj.conversation_turn) : null;
 }
 
 /** 1.0 `:1539-1545` —— 绑到组内调用 `_globalCallIndex` 的同轮工具 trace。 */
@@ -360,8 +350,8 @@ export function toolDurationMs(trace: unknown): number | null {
   const t = dict(trace);
   const duration = finiteMetric(t.duration_ms);
   if (duration != null) return duration;
-  const latency = Number(t.latency_s);
-  return Number.isFinite(latency) && latency >= 0 ? latency * 1000 : null;
+  const latency = finiteMetric(t.latency_s);
+  return latency == null ? null : latency * 1000;
 }
 
 /** 1.0 `:1554-1572` —— `retrieval_timing` 拆段：查询构建 / 各通道 / 融合 / 后处理 / 其他。 */
@@ -468,17 +458,20 @@ export function itemTimingBreakdown(item: unknown): {
   // 页面上「每一步骤耗时」的位置还在，数字是 `-`。数据其实一直在
   // `model_call_metrics[].duration_ms` 与 `tool_trace[].duration_ms` 里。
   const modelFromCalls = itemCallMetrics(i)
+    .filter(call => callType(call) !== "tool_internal")
     .map((call) => finiteMetric(call.total_ms ?? call.duration_ms))
     .filter((value): value is number => value != null);
   const toolFromTrace = (Array.isArray(i.tool_trace) ? i.tool_trace : [])
-    .map((trace) => finiteMetric(dict(trace).duration_ms))
+    .map((trace) => toolDurationMs(trace))
     .filter((value): value is number => value != null);
   const modelMs =
     saved.model_ms ??
     dict(i.llm_summary).total_ms_sum ??
-    (modelFromCalls.length ? modelFromCalls.reduce((sum, value) => sum + value, 0) : null);
+    (modelFromCalls.length ? modelFromCalls.reduce((sum, value) => sum + value, 0) :
+      Array.isArray(i.model_call_metrics) && !i.model_call_metrics.length ? 0 : null);
   const toolMs =
-    saved.tool_ms ?? (toolFromTrace.length ? toolFromTrace.reduce((sum, value) => sum + value, 0) : null);
+    saved.tool_ms ?? (toolFromTrace.length ? toolFromTrace.reduce((sum, value) => sum + value, 0) :
+      Array.isArray(i.tool_trace) && !i.tool_trace.length ? 0 : null);
   const wallMs = saved.wall_clock_ms ?? i.wall_clock_ms ?? null;
   const judgeMs = saved.judge_ms ?? i.judge_ms ?? null;
   const currentContract = finiteMetric(i.metrics_contract_version) === 2;
@@ -487,7 +480,8 @@ export function itemTimingBreakdown(item: unknown): {
     wall != null && judge != null ? Math.max(0, wall - judge) : null));
   const model = finiteMetric(modelMs), tool = finiteMetric(toolMs);
   const otherMs = finiteMetric(saved.other_ms) ?? (
-    agentWallMs != null && model != null && tool != null ? Math.max(0, agentWallMs - model - tool) : null);
+    agentWallMs != null && model != null && tool != null && model + tool <= agentWallMs
+      ? agentWallMs - model - tool : null);
   return {
     wall_clock_ms: wallMs,
     agent_wall_ms: agentWallMs,
@@ -498,48 +492,36 @@ export function itemTimingBreakdown(item: unknown): {
   };
 }
 
-/**
- * 1.0 `:1614-1640` —— 整条时间线：各 Agent Loop + Judge + Judge 排队 + 未归因差额。
- *
- * 注意 1.0 的 `itemTimingBreakdown`（本模块，1.0 `:2122-2133`）**不返回**
- * `judge_queue_wait_ms`，因此下面的 Judge 排队分支永远不触发 —— 1.0 既有行为，照搬、不修。
- */
+/** 2.0 Agent墙钟排除外部Judge；耗时重叠时不绘制伪组成条。 */
 export function qaLatencySegments(item: unknown): LatencySegment[] {
-  const loops: LatencySegment[] = agentLoopGroups(item)
-    .flatMap((group) => group.calls)
-    .map((call, index): LatencySegment | null => {
-      const timing = callAgentLoopTiming(item, call);
-      if (timing.totalMs == null) return null;
-      return {
-        kind: "agent-loop",
-        label: `Agent Loop ${index + 1} · ${callTypeLabel(call)}`,
-        shortLabel: `Loop ${index + 1}`,
-        ms: timing.totalMs,
-        call,
-      };
-    })
-    .filter((segment): segment is LatencySegment => segment !== null);
-  const breakdown = itemTimingBreakdown(item);
-  const loopMs = loops.reduce((sum, segment) => sum + segment.ms, 0);
-  const judgeMs = Number(breakdown.judge_ms);
-  if (Number.isFinite(judgeMs) && judgeMs > 0) {
-    loops.push({ kind: "judge", label: "Judge", shortLabel: "Judge", ms: judgeMs });
+  const i = dict(item);
+  const current = finiteMetric(i.metrics_contract_version) === 2;
+  const timing = itemTimingBreakdown(item);
+  const wall = finiteMetric(current ? timing.agent_wall_ms : timing.wall_clock_ms);
+  const segments: LatencySegment[] = agentLoopGroups(item).flatMap(group =>
+    group.calls.flatMap((call, index) => {
+      const ms = callAgentLoopTiming(item, call).totalMs;
+      return ms == null || ms <= 0 ? [] : [{
+        kind: "agent-loop", label: "对话 " + (group.turnIndex + 1) + " · 调用 " + (index + 1) + " · " + callTypeLabel(call),
+        shortLabel: "对话 " + (group.turnIndex + 1) + " · 调用 " + (index + 1), ms, call,
+      }];
+    }));
+  const unbound = itemToolTrace(item).filter((tool, index) => normalizedToolCallIndex(item, tool, index) == null);
+  for (const tool of unbound) {
+    const ms = toolDurationMs(tool);
+    if (ms != null && ms > 0) segments.push({ kind: "tool", label: String(tool.tool || "工具"), shortLabel: "工具", ms, trace: tool });
   }
-  const judgeQueueMs = Number((breakdown as Dict).judge_queue_wait_ms);
-  if (Number.isFinite(judgeQueueMs) && judgeQueueMs > 0) {
-    loops.push({ kind: "judge-queue", label: "Judge 排队 / 编排", shortLabel: "Judge 排队", ms: judgeQueueMs });
+  if (!current) {
+    const judge = finiteMetric(timing.judge_ms);
+    if (judge != null && judge > 0) segments.push({ kind: "judge", label: "Judge", shortLabel: "Judge", ms: judge });
   }
-  const wallMs = Number(breakdown.wall_clock_ms);
-  const otherMs = Number.isFinite(wallMs)
-    ? Math.max(
-        0,
-        wallMs - loopMs - (Number.isFinite(judgeMs) ? judgeMs : 0) - (Number.isFinite(judgeQueueMs) ? judgeQueueMs : 0),
-      )
-    : 0;
-  if (otherMs > 0.5) {
-    loops.push({ kind: "other", label: "其他未归因时延", shortLabel: "其他", ms: otherMs });
-  }
-  return loops;
+  const sum = segments.reduce((total, segment) => total + segment.ms, 0);
+  // 并行调用或工具内模型调用会产生重叠，缺少区间时只显示各自用时。
+  if (wall != null && sum > wall + 0.5) return [];
+  if (wall != null && wall > sum + 0.5) segments.push({
+    kind: "other", label: "其他未归因时延", shortLabel: "其他", ms: wall - sum,
+  });
+  return segments;
 }
 
 /** 1.0 `:1641-1645` —— 宽度用 `flex`，占比写进 CSS 变量 `--segment-share`。 */

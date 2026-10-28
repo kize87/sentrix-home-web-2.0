@@ -58,7 +58,7 @@ function dict(value: unknown): Dict {
 
 /** 1.0 `trace.latency_s == null ? "-" : fmtMs(Number(trace.latency_s) * 1000)`。 */
 function toolLatencyLabel(trace: Dict): string {
-  return trace.latency_s == null ? "-" : fmtMs(Number(trace.latency_s) * 1000);
+  return fmtMs(toolDurationMs(trace));
 }
 
 export interface AgentLoopTreeProps {
@@ -84,7 +84,7 @@ export function AgentLoopTree({ detail, modelLabel }: AgentLoopTreeProps) {
                 {showHeaders && (
                   <header className="agent-loop-turn-head">
                     <div>
-                      <strong>第 {group.turnIndex + 1} 轮 Agent Loop</strong>
+                      <strong>用户第 {group.turnIndex + 1} 轮 · 调用性能</strong>
                       <span>{esc(turn.message) || esc(detail.question)}</span>
                     </div>
                     <span>
@@ -97,7 +97,7 @@ export function AgentLoopTree({ detail, modelLabel }: AgentLoopTreeProps) {
                   <div className="call-tree">
                     {group.calls.map((call, callIndex) => (
                       <CallNode
-                        key={`${group.turnIndex}-${String(call.step_id || call._globalCallIndex || callIndex)}`}
+                        key={`${group.turnIndex}-${String(call._globalCallIndex ?? callIndex)}`}
                         detail={detail}
                         group={group}
                         call={call}
@@ -132,7 +132,7 @@ export function AgentLoopTree({ detail, modelLabel }: AgentLoopTreeProps) {
           })}
         </div>
       ) : (
-        <p className="qa-performance-empty">该历史结果未记录主模型调用性能或失败轨迹。</p>
+        <p className="qa-performance-empty">{detail.termination_reason === "policy_refusal" ? "安全规则直接拒答，本轮无模型调用。" : "该结果未记录模型调用性能。"}</p>
       )}
       {unbound.length > 0 && (
         <details className="call-node unbound-tools">
@@ -179,13 +179,14 @@ function CallNode({ detail, group, call, callIndex, modelLabel }: CallNodeProps)
   const timing = callAgentLoopTiming(detail, call);
   const segments = callLatencySegments(detail, call);
   const observation = callObservation(call);
-  const step = debugStepForCallInGroup(detail, group, call);
+  const modernTrace = Number(detail.metrics_contract_version) === 2 || Boolean(dict(group.turn).trace_bundle);
+  const step = modernTrace ? null : debugStepForCallInGroup(detail, group, call);
   // 2.0 的完整调用（messages / tools / 原始回复）按 step_id 挂在同一轮里；
   // 老 run 没有它，回退到 1.0 的 debug_trace 投影。
   const modelCall = debugCallForCall(detail, call);
   const showTools = showToolBranch(call);
   const tools = toolsForGroupedCall(detail, call);
-  const toolDebugs = showTools ? debugToolsForCall(detail, group, call) : [];
+  const toolDebugs = showTools && !modernTrace ? debugToolsForCall(detail, group, call) : [];
 
   return (
     <details

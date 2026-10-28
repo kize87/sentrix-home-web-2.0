@@ -372,6 +372,7 @@ export function callTypeLabel(call: unknown): string {
     recovery: "Agent 恢复调用",
     writer: "最终回答重写",
     faithfulness_judge: "L2 事实一致性检查",
+    claim_verifier: "L3 答案事实核验",
     tool_internal: "工具内部模型调用",
     legacy: "历史模型调用",
   };
@@ -403,6 +404,9 @@ export function turnTerminationLabel(turn: unknown): string {
   if (/token budget preflight failed|tokenize-current|502 Bad Gateway|tokenize.*502/i.test(reason)) return "上下文 token 预检失败（tokenize 接口 502）";
   const labels: Record<string, string> = {
     complete: "正常完成",
+    answered: "已回答",
+    answered_with_gap: "已回答，仍有证据缺口",
+    policy_refusal: "安全规则拒答",
     parse_failure: "JSON 解析失败",
     model_error: "模型请求失败",
     context_blocked: "上下文或 token 预检拦截",
