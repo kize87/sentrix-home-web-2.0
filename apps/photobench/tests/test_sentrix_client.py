@@ -101,6 +101,30 @@ def test_import_album_sends_a_server_side_directory():
     assert timeout == 99
 
 
+def test_split_import_and_pipeline_use_the_explicit_endpoints():
+    client, http = _client(
+        {
+            "imports/assets": {"imported": 2, "asset_ids": ["a1", "a2"]},
+            "pipeline/process": {"processed": 2, "timings": {"memory_graph": 0.2}},
+        }
+    )
+
+    staged = client.import_assets(scope_id="s1", directory="/srv/a", limit=2, timeout=90)
+    processed = client.process_pipeline(scope_id="s1", asset_ids=staged["asset_ids"], timeout=900)
+
+    assert processed["processed"] == 2
+    assert http.calls[0][:3] == (
+        f"{BASE}/api/v1/imports/assets",
+        {"scope_id": "s1", "directory": "/srv/a", "limit": 2},
+        "POST",
+    )
+    assert http.calls[1][:3] == (
+        f"{BASE}/api/v1/pipeline/process",
+        {"scope_id": "s1", "asset_ids": ["a1", "a2"]},
+        "POST",
+    )
+
+
 def test_ask_is_two_calls_and_the_turn_poll_uses_the_plural_path():
     """1.0 一次 ``POST /assistant/turn`` 拿到答案；2.0 先建会话再发起回合，
     而轮询路径是**复数** ``/assistant/turns/{id}``（1.0 是单数）。
@@ -121,9 +145,19 @@ def test_ask_is_two_calls_and_the_turn_poll_uses_the_plural_path():
     assert conversation_call[0] == f"{BASE}/api/v1/assistant/conversations"
     assert conversation_call[1] == {"scope_id": "s1", "title": "q1"}
     assert turn_call[0] == f"{BASE}/api/v1/assistant/conversations/conv_1/turns"
+    # 默认不发 include_debug：只有评测侧明确要求时才把完整 prompt 带回来。
     assert turn_call[1] == {"message": "海边有谁？"}
     assert poll_call[0] == f"{BASE}/api/v1/assistant/turns/turn_1"
     assert poll_call[2] == "GET"
+
+
+def test_start_turn_can_request_the_full_debug_trace():
+    """评测侧显式打开 ``include_debug``；这是 8772 拿模型原始输入输出的唯一开关。"""
+    client, http = _client({"turns": {"turn_id": "turn_1", "status": "running"}})
+
+    client.start_turn(conversation_id="conv_1", message="海边有谁？", include_debug=True)
+
+    assert http.calls[0][1] == {"message": "海边有谁？", "include_debug": True}
 
 
 def test_relationship_batch_sends_the_explicit_name_mapping():

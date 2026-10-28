@@ -37,6 +37,10 @@
   expire after three source periods and are never re-stamped as new observations.
 - Product model-call traces add optional tool-argument parse counts and outcomes.
   They contain execution facts, not benchmark judgments or raw prompts.
+  **2026-10-26:** raw prompts are available only through the opt-in
+  `include_debug=true` turn request, as `trace.debug_calls` (actual messages,
+  actual tools, raw content/thought/tool calls). The flag is off by default;
+  PhotoBench turns it on for evaluation. Absence is not an empty model call.
 - Native tool-argument JSON parsing has its own denominator; plain-text answers
   are not JSON attempts. Legacy JSON-action metrics remain available for legacy
   structured-action traces. Missing observations are not inferred successes.
@@ -247,3 +251,8 @@ Jetson正式采样的核心进程内存读取移入单个spawn子进程，与HTT
 ## 派生错误分析（规则版本1，2026-10-24）
 
 原质量、行为、检索和遥测公式不变。新增错误分析分别报告异常事件数、受影响题数、最终执行失败题数、明确恢复题数，题级/轮级/调用级分母独立；缺失和未覆盖保留未知。按角色、轮、步骤及重试ID保留证据；文本识别注明依据。两轮匹配以QA ID和定义指纹为准，配置不可比时不汇总提升。来源SHA256、过期检测、离线导出和可选AI约束见[错误分析设计](photobench-error-analysis.md)。
+
+
+### 2026-10-28 显式导入与流水线进度
+
+新链中 `photo_import.execution_mode=explicit` 仅统计资产登记；`pipeline_processing.progress` 的可选 `stage=media_processing|finalizing|completed` 和 `request_status=running|returned` 表示媒体计数与同步请求的状态。processed、failed、skipped 为互斥计数。媒体计数达到 total 不代表汇总请求已经返回；阶段终态仍由真实响应决定。历史没有这些字段时保留原计时，前端只调整处理详情所在卡片。查询失败保留上次观测，不能由缺失值推断完成。显式请求取消后的活跃本地线程继续报告 stop_pending；尚无远端 operation_id 中断接口。

@@ -38,8 +38,11 @@ class FakeSentrixClient:
         asset_polls: list[list[dict[str, Any]]] | None = None,
         asset_cycle: list[list[dict[str, Any]]] | None = None,
         import_result: dict[str, Any] | None = None,
+        pipeline_result: dict[str, Any] | None = None,
+        explicit_pipeline: bool = False,
         entity_ids: dict[str, str] | None = None,
         turns: dict[str, list[dict[str, Any]]] | None = None,
+        turn_errors: dict[str, list[Exception]] | None = None,
         seed_error: dict[str, Exception] | None = None,
         poll_limit: int = 0,
     ) -> None:
@@ -65,9 +68,24 @@ class FakeSentrixClient:
             "summarized": 0,
             "failures": [],
         }
+        self.pipeline_result = pipeline_result or {
+            "scope_id": "",
+            "processed": 0,
+            "skipped": 0,
+            "events": 0,
+            "lexical_terms": 0,
+            "video_scenes": 0,
+            "summarized": 0,
+            "timings": {},
+            "failures": [],
+            "memory_graph": None,
+        }
+        self.supports_explicit_pipeline = explicit_pipeline
         self.entity_ids = entity_ids or {}
         #: turn_id → 该回合按次消费的 ``get_turn`` 响应队列。
         self.turns = turns or {}
+        #: turn_id → ``get_turn`` 要先抛出的瞬态网络错误。用来钉住评测端的重试语义。
+        self.turn_errors = {key: list(value) for key, value in (turn_errors or {}).items()}
         self.seed_error = seed_error or {}
         self._turn_seq = 0
         self._conversation_seq = 0
@@ -137,6 +155,14 @@ class FakeSentrixClient:
         self._record("import_album", scope_id=scope_id, directory=directory, limit=limit, timeout=timeout)
         return {**self.import_result, "scope_id": scope_id, "directory": directory}
 
+    def import_assets(self, *, scope_id: str, directory: str, limit: int, timeout: int) -> dict[str, Any]:
+        self._record("import_assets", scope_id=scope_id, directory=directory, limit=limit, timeout=timeout)
+        return {**self.import_result, "scope_id": scope_id, "directory": directory}
+
+    def process_pipeline(self, *, scope_id: str, asset_ids: Sequence[str], timeout: int) -> dict[str, Any]:
+        self._record("process_pipeline", scope_id=scope_id, asset_ids=list(asset_ids), timeout=timeout)
+        return {**self.pipeline_result, "scope_id": scope_id}
+
     def list_assets(self, *, scope_id: str, limit: int, timeout: int = 60) -> list[dict[str, Any]]:
         self._record("list_assets", scope_id=scope_id, limit=limit)
         self.poll_count += 1
@@ -160,13 +186,29 @@ class FakeSentrixClient:
             "last_message_at": now_iso(),
         }
 
-    def start_turn(self, *, conversation_id: str, message: str, timeout: int = 300) -> dict[str, Any]:
-        self._record("start_turn", conversation_id=conversation_id, message=message, timeout=timeout)
+    def start_turn(
+        self,
+        *,
+        conversation_id: str,
+        message: str,
+        include_debug: bool = False,
+        timeout: int = 300,
+    ) -> dict[str, Any]:
+        self._record(
+            "start_turn",
+            conversation_id=conversation_id,
+            message=message,
+            include_debug=include_debug,
+            timeout=timeout,
+        )
         self._turn_seq += 1
         return {"turn_id": f"turn_{self._turn_seq}", "conversation_id": conversation_id, "status": "running"}
 
     def get_turn(self, *, turn_id: str, timeout: int = 30) -> dict[str, Any]:
-        self._record("get_turn", turn_id=turn_id)
+        self._record("get_turn", turn_id=turn_id, timeout=timeout)
+        errors = self.turn_errors.get(turn_id) or []
+        if errors:
+            raise errors.pop(0)
         queue = list(self.turns.get(turn_id) or [])
         index = self.turn_polls.get(turn_id, 0)
         self.turn_polls[turn_id] = index + 1
@@ -273,11 +315,16 @@ class FakeInference:
         stream_chunks: list[str] | None = None,
         slots: int | None = None,
         health_status: str = "ok",
+        health_failures: int = 0,
+        health_error: str = "Server disconnected without sending a response.",
     ) -> None:
         self.calls: list[str] = []
         self.chat_error = chat_error
-        # 端点探活自报的状态。``"ok"`` 之外的任何值都表示「现在不值得开一轮 487 题」。
+        # 端点探活自报的状态。``"ok"`` 之外的任何值都表示「现在不值得开一轮题」。
         self.health_status = health_status
+        # 前 N 次探活返回 unavailable（模拟 4/4 slot 饱和时的瞬时断开）。
+        self.health_failures = health_failures
+        self.health_error = health_error
         # 端点自报的并发槽位。``None`` = 问不到（llama.cpp 之外的端点、或端点没起来），
         # 那是 ``_resolve_qa_concurrency`` 退回 1 的那条路。
         self.slots = slots
@@ -294,6 +341,9 @@ class FakeInference:
 
     def health(self) -> dict[str, Any]:
         self.calls.append("health")
+        if self.health_failures > 0:
+            self.health_failures -= 1
+            return {"status": "unavailable", "error": self.health_error}
         return {"status": self.health_status}
 
     def list_models(self) -> dict[str, Any]:

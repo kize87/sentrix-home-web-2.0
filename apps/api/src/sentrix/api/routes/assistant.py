@@ -233,11 +233,16 @@ def start_turn(
     # 回合的 scope 由会话决定，请求里没有这个字段可传。会话不存在时 ``start`` 抛
     # ``TurnNotFoundError``（带 404 的码），路由**只放行**——映射在 ``api/errors.py``。
     try:
-        record = run_turn.start(TurnRequest(conversation_id=conversation_id, question=payload.message))
+        record = run_turn.start(
+            TurnRequest(
+                conversation_id=conversation_id, question=payload.message, include_debug=payload.include_debug
+            )
+        )
     except (ValueError, OverflowError) as error:
         raise HTTPException(
             status_code=409 if isinstance(error, ValueError) else 429, detail=str(error)
         ) from error
+    manage.ensure_title(conversation_id, payload.message)
 
     broker = container.turn_event_broker
     # 先登记再起飞：SSE 可能比工作线程的第一条事件更早连上来。

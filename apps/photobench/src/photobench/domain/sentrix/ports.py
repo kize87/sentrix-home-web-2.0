@@ -9,8 +9,8 @@
 ``POST /api/memory-spaces``  **没有**：导入时内部 ensure   （相位里只记 id）
 ``POST /api/people/seed-batch``  ``/v1/people/seed``（单人）  ``seed_person``
 ``POST /api/relationships/batch``  ✅ 同路径加 ``/v1``    ``import_relationships``
-``POST /api/import``      ``/v1/imports``（服务端目录）   ``import_album``
-``POST /ingest-batches/{id}/complete``  **没有**：并入 imports  （相位里不做）
+``POST /api/import``      ``/v1/imports/assets``（服务端目录） ``import_assets``
+``POST /ingest-batches/{id}/complete``  ``/v1/pipeline/process`` ``process_pipeline``
 ``GET /api/assets``       ✅ ``/v1/assets``               ``list_assets``
 ``POST /api/assistant/turn``  **两段式**：建会话 + 发起回合  ``start_conversation`` /
                                                           ``start_turn``
@@ -19,11 +19,12 @@
 
 **三处形状差异不是口味，是 2.0 的接口事实（每一条都核过代码）：**
 
-1. **导入按「服务端目录」而不是按「上传字节」**。``POST /api/v1/imports`` 收的是
+1. **导入按「服务端目录」而不是按「上传字节」**。兼容入口 ``POST /api/v1/imports`` 与
+   评测入口 ``POST /api/v1/imports/assets`` 收的都是
    ``{directory, scope_id, limit}``，``ImportAlbum.execute`` 用 ``root.iterdir()``
    **非递归**扫后缀（``application/media/import_album.py:100-102``）。所以这个方法的
    入参是**目录**，返回体的键名沿用 2.0 的响应
-   （``{scope_id, directory, imported, deduplicated, events, ...}``）。1.0 那种
+   （资产-only 返回 ``asset_ids``，供后续显式流水线按序处理）。1.0 那种
    「manifest 列了哪些文件就传哪些」的能力 2.0 的端点给不了——**目录里的文件集合
    才是权威**，这条差异记在行为基线里。
 2. **种身份是单人一次**。1.0 的 ``seed-batch`` 一次带 N 个人 + N 张参考图；2.0 的
@@ -103,6 +104,14 @@ class SentrixClient(Protocol):
         """
         ...
 
+    def import_assets(self, *, scope_id: str, directory: str, limit: int, timeout: int) -> dict[str, Any]:
+        """``POST /api/v1/imports/assets``：只落盘并登记资产，返回有序 ``asset_ids``。"""
+        ...
+
+    def process_pipeline(self, *, scope_id: str, asset_ids: Sequence[str], timeout: int) -> dict[str, Any]:
+        """``POST /api/v1/pipeline/process``：同步执行关键帧、记忆与图构建。"""
+        ...
+
     def list_assets(self, *, scope_id: str, limit: int, timeout: int = 60) -> list[dict[str, Any]]:
         """``GET /api/v1/assets?scope_id=&limit=``，**拆掉响应信封后**的资产表。
 
@@ -122,11 +131,22 @@ class SentrixClient(Protocol):
         """
         ...
 
-    def start_turn(self, *, conversation_id: str, message: str, timeout: int = 300) -> dict[str, Any]:
+    def start_turn(
+        self,
+        *,
+        conversation_id: str,
+        message: str,
+        include_debug: bool = False,
+        timeout: int = 300,
+    ) -> dict[str, Any]:
         """``POST /api/v1/assistant/conversations/{cid}/turns``，返回 ``{turn_id, status}``。
 
-        **不是同步返回答案**：状态码 202，执行在后台线程。scope **不在请求体里**
-        （``StartTurnRequest`` 只有 ``message``），它继承会话。
+        **不是同步返回答案**：状态码 202，执行在后台线程。scope **不在请求体里**，
+        它继承会话。
+
+        ``include_debug=True`` 让主 API 在终态载荷的 ``trace.debug_calls`` 里带上每次
+        模型调用**实际发送的 messages / tools 与原始回复**。评测侧打开它；其他调用方
+        不打开，产品对话就不会把那几十 KB 的提示词写进 ``agent_turns``。
         """
         ...
 

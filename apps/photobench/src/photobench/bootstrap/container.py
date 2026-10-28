@@ -257,6 +257,7 @@ class Container:
                     log_path=settings.sentrix_log_path,
                     http=http,
                     runtime_snapshot=snapshot,
+                    environment=dict(settings.sentrix_environment),
                 )
             )
 
@@ -345,6 +346,7 @@ class Container:
             # 可被 ``POST /api/config`` 就地改写的全局量，传当前值会在配置写回后
             # 仍打旧地址。
             sentrix_url=lambda: config.sentrix_url,
+            albums=album_source,
         )
         model_profiles = ModelProfiles(
             config=config,

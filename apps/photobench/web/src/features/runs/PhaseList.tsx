@@ -69,9 +69,13 @@ export function PhaseList({ activeRun }: PhaseListProps) {
           const start = typeof phase?.started_at === "string" ? Date.parse(phase.started_at) : NaN;
           const displayPhase = !terminal && phase?.status === "running" && Number.isFinite(start)
             ? { ...phase, total_seconds: Math.max(0, (now - start) / 1000) } : phase;
-          const progress = phase?.progress;
+          const legacyImport = activeRun.phases?.photo_import;
+          const processingDetails = phaseDef.key === "pipeline_processing" &&
+            legacyImport?.execution_mode !== "explicit" && legacyImport?.progress?.current_directory
+            ? legacyImport : undefined;
+          const progress = processingDetails?.progress ?? phase?.progress;
           const observation = progress?.observation;
-          const finishedAt = phase?.finished_at ?? (terminal ? activeRun.finished_at : null);
+          const finishedAt = (processingDetails ?? phase)?.finished_at ?? (terminal ? activeRun.finished_at : null);
           const end = typeof finishedAt === "string" ? Date.parse(finishedAt) : now;
           const errors = phaseErrorDetails(phase);
           const metrics = pipelineMetricRows(phase);
@@ -87,12 +91,13 @@ export function PhaseList({ activeRun }: PhaseListProps) {
                 </span>
               </div>
               <p className="phase-summary">{phaseSummary(phaseDef.key, displayPhase, activeRun.item_count)}</p>
-              {phaseDef.key === "photo_import" && phase?.progress?.current_directory ? (
+              {processingDetails && progress?.current_directory ? (
                 <div className="import-progress-panel" data-testid="import-waiting">
+                  <p className="muted">历史合并请求中的处理进度；计时保留原记录。</p>
                   <div className="import-progress-head">
                     <div className="import-progress-location">
                       <span className="import-progress-eyebrow">当前目录</span>
-                      <strong title={String(phase.progress.current_directory)}>{String(phase.progress.current_directory)}</strong>
+                      <strong title={String(progress.current_directory)}>{String(progress.current_directory)}</strong>
                     </div>
                     <span className="import-progress-clock">本目录请求已用 {elapsedSeconds(progress?.request_started_at, end)} 秒</span>
                   </div>
@@ -118,11 +123,11 @@ export function PhaseList({ activeRun }: PhaseListProps) {
                     Number(elapsedSeconds(progress.last_received_at, now)) > 10
                     ? <p className="import-progress-warning">进度查询超过 10 秒未刷新，当前显示上次观测。</p> : null}
                   <div className="import-progress-directory">
-                    已完成目录 {Number(phase.progress.directories_done ?? 0)}/{Number(phase.progress.directories_total ?? 0)}
+                    已完成目录 {Number(progress.directories_done ?? 0)}/{Number(progress.directories_total ?? 0)}
                   </div>
                 </div>
               ) : null}
-              {phaseDef.key === "photo_import" && observation &&
+              {processingDetails && observation &&
                 typeof observation.total === "number" && observation.total > 0 &&
                 typeof observation.completed === "number" ? (
                   <div className="import-progress-bar-wrap">
@@ -151,10 +156,13 @@ export function PhaseList({ activeRun }: PhaseListProps) {
                   {errors.length > 20 ? <p>仅展示前 20 条，完整记录已保存在 run.json。</p> : null}
                 </details>
               ) : null}
-              {phaseDef.key === "pipeline_processing" && phase?.progress ? (
+              {(phaseDef.key === "photo_import" || phaseDef.key === "pipeline_processing") && phase?.progress ? (
                 <div className="phase-bar">
                   <div className="phase-bar-fill" style={{ width: `${phasePercent(phase)}%` }} />
                 </div>
+              ) : null}
+              {phaseDef.key === "pipeline_processing" && phase?.progress ? (
+                <p className="muted">媒体进度按处理、失败和跳过的数量统计；事件总结、图构建和人物信息更新结束后，流水线才完成。</p>
               ) : null}
               {phaseDef.key === "pipeline_processing" && metrics.length > 0 ? (
                 <div className="phase-metrics pipeline-metrics">

@@ -148,3 +148,30 @@ it("导入终态保留真实扫描分母及去重，manifest数量单列保存",
   expect(container.textContent).toContain("已处理 3/3 个媒体 · 新增 1 · 去重 1 · 失败 1");
   expect(container.textContent).not.toContain("/99 个媒体");
 });
+
+
+it("历史处理详情归入流水线卡，新导入卡只显示登记摘要", () => {
+  const { container } = render(<PhaseList activeRun={activeRun({
+    photo_import: { status: "done", progress: { current_directory: "photos", observation: {
+      completed: 3, total: 3, stage: "completed",
+    } } },
+    pipeline_processing: { status: "done" },
+  })} />);
+  const cards = container.querySelectorAll(".phase-card");
+  expect(cards[3]?.querySelector(".import-progress-panel")).toBeNull();
+  expect(cards[4]?.querySelector(".import-progress-panel")).not.toBeNull();
+  expect(cards[4]?.textContent).toContain("计时保留原记录");
+});
+
+it("显式流水线媒体100%时仍显示等待汇总，导入不承载处理详情", () => {
+  const { container } = render(<PhaseList activeRun={activeRun({
+    photo_import: { status: "done", execution_mode: "explicit", progress: { current_directory: "photos" } },
+    pipeline_processing: { status: "running", progress: {
+      total: 3, processed: 3, stage: "finalizing", request_status: "running",
+    } },
+  })} />);
+  const cards = container.querySelectorAll(".phase-card");
+  expect(cards[3]?.querySelector(".import-progress-panel")).toBeNull();
+  expect(cards[4]?.textContent).toContain("等待流水线汇总");
+  expect(cards[4]?.querySelector(".phase-status")?.textContent).toBe("进行中");
+});
