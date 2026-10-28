@@ -1075,3 +1075,7 @@ details.qa-results-body[open] > summary::before { content:"▾ "; }
 .trace-call-performance { margin-bottom:12px; }
 .model-call-node > summary { flex-wrap:wrap; gap:4px 12px; }
 .model-call-body .call-purpose-grid { margin:8px 0; }
+
+/* 流水线含十个计时项，独占一行并按可用宽度排列。 */
+.pipeline-phase-card { grid-column:1 / -1; }
+.pipeline-phase-card .pipeline-metrics { grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); }
