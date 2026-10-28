@@ -1351,17 +1351,17 @@ class RunExecution:
                     + int(result.get("deduplicated") or 0)
                     + len(result.get("failures") or [])
                 )
-                raw_counts = [result.get("imported"), result.get("deduplicated")]
-                raw_failures = result.get("failures")
-                valid_counts = [
-                    value
-                    for value in raw_counts
-                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0
-                ]
-                if scanned_count is not None and len(valid_counts) == 2 and isinstance(raw_failures, list):
-                    scanned_count += sum(valid_counts) + len(raw_failures)
-                else:
-                    scanned_count = None
+            raw_counts = [result.get("imported"), result.get("deduplicated")]
+            raw_failures = result.get("failures")
+            valid_counts = [
+                value
+                for value in raw_counts
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            ]
+            if scanned_count is not None and len(valid_counts) == 2 and isinstance(raw_failures, list):
+                scanned_count += sum(valid_counts) + len(raw_failures)
+            else:
+                scanned_count = None
             # 新接口这里只返回资产导入耗时；兼容旧客户端时仍可能带 prepare/finish，
             # 所以统一累加任意后端 timing 键，历史 run 也能继续展示。
             for key, value in (result.get("timings") or {}).items():

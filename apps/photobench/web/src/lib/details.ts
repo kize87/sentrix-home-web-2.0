@@ -252,7 +252,9 @@ export function phaseSummary(key: string, phase: unknown, itemCount: unknown = n
     if (typeof p.scanned_count === "number") {
       const completed = typeof p.accepted_count === "number" && typeof p.deduplicated_count === "number" &&
         typeof p.failed_count === "number" ? p.accepted_count + p.deduplicated_count + p.failed_count : null;
-      return `已处理 ${count(completed)}/${count(p.scanned_count)} 个媒体 · 新增 ${count(p.accepted_count)} · 去重 ${count(p.deduplicated_count)} · 失败 ${count(p.failed_count)} · 阶段墙钟 ${total}${backendTotal}${breakdown}`;
+      // Early explicit runs saved scanned_count as zero; their recorded outcomes give the actual total.
+      const scanned = p.execution_mode === "explicit" ? completed : p.scanned_count;
+      return `已处理 ${count(completed)}/${count(scanned)} 个媒体 · 新增 ${count(p.accepted_count)} · 去重 ${count(p.deduplicated_count)} · 失败 ${count(p.failed_count)} · 阶段墙钟 ${total}${backendTotal}${breakdown}`;
     }
     const accepted = count(p.accepted_count);
     const totalMedia = count(p.total_media ?? p.total_photos);

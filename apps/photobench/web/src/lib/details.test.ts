@@ -260,6 +260,16 @@ describe("phaseSummary：部分阶段缺失时各走各的回退（1.0 :2153-218
     );
   });
 
+  it("显式导入用已记录的实际结果显示总数，兼容早期漏累计的扫描数", () => {
+    expect(phaseSummary("photo_import", {
+      execution_mode: "explicit", scanned_count: 0, total_media: 99,
+      accepted_count: 12, deduplicated_count: 1, failed_count: 1, total_seconds: 1,
+    })).toBe("已处理 14/14 个媒体 · 新增 12 · 去重 1 · 失败 1 · 阶段墙钟 1s");
+    expect(phaseSummary("photo_import", {
+      execution_mode: "explicit", scanned_count: 0, total_seconds: 1,
+    })).toBe("已处理 ?/? 个媒体 · 新增 ? · 去重 ? · 失败 ? · 阶段墙钟 1s");
+  });
+
   it("pipeline_processing：有 progress 才展开，否则落到通用「耗时」", () => {
     expect(
       phaseSummary("pipeline_processing", {

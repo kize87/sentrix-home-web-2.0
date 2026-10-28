@@ -588,6 +588,7 @@ def test_explicit_pipeline_moves_memory_keyframes_and_graph_out_of_photo_import(
     photo = state["phases"]["photo_import"]
     pipeline = state["phases"]["pipeline_processing"]
     assert photo["pipeline_seconds"] == 0.0
+    assert photo["scanned_count"] == 2
     assert photo["timings"]["asset_import"] == 1.2
     assert pipeline["keyframe_extraction_seconds"] == 4.0
     assert pipeline["keyframe_memory_seconds"] == 12.0
@@ -1679,7 +1680,8 @@ def test_late_sample_callback_does_not_reopen_or_append_to_a_finished_run():
     assert "telemetry_live" not in state.data
 
 
-def test_import_final_scan_count_uses_product_outcomes_not_manifest_expectation():
+@pytest.mark.parametrize("explicit_pipeline", [False, True])
+def test_import_final_scan_count_uses_product_outcomes_not_manifest_expectation(explicit_pipeline):
     albums = FakeAlbums(
         manifest=_manifest(),
         qa_rows=_rows(),
@@ -1687,6 +1689,7 @@ def test_import_final_scan_count_uses_product_outcomes_not_manifest_expectation(
         directory_entries={"photos": 5},
     )
     client = FakeSentrixClient(
+        explicit_pipeline=explicit_pipeline,
         asset_polls=_polls(_assets()),
         import_result={
             "imported": 1,
@@ -1701,7 +1704,9 @@ def test_import_final_scan_count_uses_product_outcomes_not_manifest_expectation(
     assert phase["total_media"] == 2  # immutable manifest expectation remains traceable
     assert phase["scanned_count"] == 3  # five entries, three supported media actually settled
     assert (phase["accepted_count"], phase["deduplicated_count"], phase["failed_count"]) == (1, 1, 1)
-    assert phase["directories"][0]["progress"]["request_status"] == "returned"
+    assert phase["progress"]["request_status"] == "returned"
+    if not explicit_pipeline:
+        assert phase["directories"][0]["progress"]["request_status"] == "returned"
 
 
 @pytest.mark.parametrize(
