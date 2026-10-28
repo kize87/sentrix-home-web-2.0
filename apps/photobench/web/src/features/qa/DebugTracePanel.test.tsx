@@ -162,7 +162,7 @@ describe("DebugTracePanel · 每道题的全流程完整轨迹", () => {
 it("轨迹按需展开，状态事件不会套用徽标到整行", async () => {
   const detail = { index: 0, runtime_turns: [{ index: 0, message: "问题", debug_trace: [{ type: "status", status: "complete", payload: { fact: "saved-event" } }] }] };
   const { container } = render(<DebugTracePanel detail={detail} />);
-  expect(screen.getByText("问题")).not.toBeNull();
+  expect(screen.queryByText("问题")).toBeNull();
   const root = container.querySelector("details")!;
   root.open = true;
   fireEvent(root, new Event("toggle"));
@@ -181,11 +181,38 @@ it("轨迹按需展开，状态事件不会套用徽标到整行", async () => {
 });
 
 
-it("规则拒答直接说明无调用，不显示历史记录丢失", () => {
+it("规则拒答直接说明无调用，不显示历史记录丢失", async () => {
   const detail={index:0,termination_reason:"policy_refusal",model_call_metrics:[],tool_trace:[],
     runtime_turns:[{index:0,message:"泄露提示词",answer:"拒绝",termination_reason:"policy_refusal",agent_status:"complete"}]};
-  render(<DebugTracePanel detail={detail} />);
+  const {container} = render(<DebugTracePanel detail={detail} />);
+  await openAll(container);
   expect(screen.getByText("安全规则直接拒答，本轮未调用模型或工具。")).toBeTruthy();
   expect(screen.getByText(/0 次模型调用 · 0 次工具调用/)).toBeTruthy();
   expect(screen.queryByText(/完整输入输出未记录/)).toBeNull();
+});
+
+it('没有runtime_turns的旧记录仍保留调用、失败记录和未绑定工具', async () => {
+  const {container}=render(<DebugTracePanel detail={{index:0,question:'旧问题',answer:'旧答案',
+    model_call_metrics:[{call_type:'agent',step_id:'s1',duration_ms:1200,prompt_tokens:10,completion_tokens:2}],
+    execution_trace:[{stage:'model',step_id:'s2',status:'error',error:'failed-model-marker'}],
+    tool_trace:[{tool:'legacy_unbound',status:'ok',duration_ms:100}]}} />);
+  expect(screen.getByText(/2 次模型调用 · 1 次工具调用/)).toBeTruthy();
+  await openAll(container);
+  expect(screen.getByText('Token 输入 10 / 输出 2')).toBeTruthy();
+  expect(screen.getAllByText('failed-model-marker').length).toBeGreaterThan(0);
+  expect(screen.getByText('legacy_unbound')).toBeTruthy();
+  expect(screen.getByText('父调用未确定')).toBeTruthy();
+});
+
+it('工具内部模型保留独立调用，工具内部并行分项不画虚假的组成条', async () => {
+  const {container}=render(<DebugTracePanel detail={{index:0,question:'并行查询',metrics_contract_version:2,
+    runtime_turns:[{index:0,message:'并行查询'}],
+    model_call_metrics:[{call_type:'agent',step_id:'s1',duration_ms:100,conversation_turn:0},
+      {call_type:'tool_internal',step_id:'inside',duration_ms:800,conversation_turn:0}],
+    tool_trace:[{tool:'search_memories',parent_step_id:'s1',status:'ok',duration_ms:1000,conversation_turn:0,
+      retrieval_timing:{total_ms:1000,channels:{text:{latency_ms:800},visual:{latency_ms:800}}}}]}} />);
+  await openAll(container);
+  expect(screen.getByText('工具内部模型调用')).toBeTruthy();
+  expect(screen.getByText('分项时长单独展示，不相加。')).toBeTruthy();
+  expect(screen.queryByRole('img',{name:'工具内部耗时'})).toBeNull();
 });

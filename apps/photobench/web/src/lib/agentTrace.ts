@@ -10,7 +10,7 @@
  * 缺数据时返回空表/`null`，由渲染层显示「未记录」，**不推断**。
  */
 
-import { itemCallMetrics, normalizedToolCallIndex } from "./trace.ts";
+import { agentLoopGroups, debugStepForCallInGroup, itemCallMetrics, normalizedToolCallIndex } from "./trace.ts";
 
 export type Dict = Record<string, unknown>;
 
@@ -39,9 +39,18 @@ function objectList(value: unknown): Dict[] {
     : [];
 }
 
-/** `runtime_turns` 的每一轮；非数组回空。 */
+/** 读取已存用户轮次；只有题级调用的旧结果按其原轮次分组。 */
 export function runtimeTurns(item: unknown): Dict[] {
-  return objectList(dict(item).runtime_turns);
+  const i = dict(item);
+  const turns = objectList(i.runtime_turns);
+  if (turns.length) return turns;
+  if (!i.question && !itemCallMetrics(i).length && !objectList(i.tool_trace).length && !objectList(i.conversation).length) return [];
+  // 旧存档只有题级调用时，沿已有轮次分组展示，不能在移除旧调用树后丢失。
+  const groups = agentLoopGroups(i);
+  return groups.map(group => ({
+    ...(groups.length === 1 ? i : {}), ...group.turn, index: group.turnIndex,
+    message: group.turn.message ?? (groups.length === 1 ? i.question : undefined),
+  }));
 }
 
 /** 一轮里的完整模型调用；老 run 没有这一格时回空表。 */
@@ -116,10 +125,16 @@ export function turnModelCalls(item: unknown, turnIndex: number): Dict[] {
     .filter(call => Number((call as Dict).conversation_turn ?? 0) === turnIndex);
   const records: Dict[] = metrics.length ? metrics : objectList(dict(turn.trace_bundle).model_calls)
     .map(call => ({ ...call, conversation_turn: turnIndex }));
+  const group = agentLoopGroups(item).find(value => value.turnIndex === turnIndex);
+  for (const call of group?.calls ?? []) if (call._traceOnly) records.push(call);
   const merged = records.map(call => {
     const io = debugCallForCall(item, call);
     if (io) used.add(io);
-    return { ...io, ...call, conversation_turn: turnIndex };
+    const legacy = !io && group && Number(dict(item).metrics_contract_version) !== 2 && !turn.trace_bundle
+      ? debugStepForCallInGroup(item, group, call) : null;
+    const legacyIO = legacy ? { messages: legacy.prompt ?? dict(legacy.debug).prompt,
+      response: { content: legacy.raw_full ?? legacy.raw ?? dict(legacy.debug).raw } } : {};
+    return { ...legacyIO, ...io, ...call, conversation_turn: turnIndex };
   });
   // 只保存了debug的真实调用也要展示，不把调用数写成0。
   const extra = debug.filter(call => !used.has(call)).map(call => ({ ...call, conversation_turn: turnIndex }));

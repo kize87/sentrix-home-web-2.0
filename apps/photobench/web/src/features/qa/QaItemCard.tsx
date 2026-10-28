@@ -2,8 +2,7 @@ import { taxonomyLabel, abilityLabel } from "../../lib/qaTaxonomy.ts";
 /**
  * 单题卡（列表项 + 展开体）。移植 1.0 `App.vue:3460-3674`。
  *
- * 详情先展示各轮对话、执行轨迹与评分，再展示媒体、GT及评分说明。
- * 调用性能作为折叠入口；每轮证据账本归入该轮执行轨迹。
+ * 详情先展示回答、媒体和评分；底部按需展开对话、性能与证据账本。
  *
  * **两个媒体区是两件事**（1.0 `:703-711` 的注释原文）：
  *   工具召回图片 `toolRecallMedia`（检索候选） / 模型使用图片 `itemEvidenceMedia`（显式交付，
@@ -13,7 +12,6 @@ import type { MediaLike } from "../../api/media.ts";
 import type { RejudgeTask, RunItemDetail, RunItemSummary } from "../../api/types.ts";
 import {
   itemMedia,
-  itemParseRate,
   itemRetrievalMetrics,
   conversationTurns,
   itemEvidenceMedia,
@@ -28,15 +26,14 @@ import {
   judgeRoundState,
   judgeScoreLabel,
   scoreClass,
+  turnTerminationLabel,
   taskDecisionLabel,
 } from "../../lib/format.ts";
 import { isVideoMedia, imageUrl, pauseVideoAtEvidenceFrame } from "../../api/media.ts";
 import { itemLayerChain } from "../../lib/graphs.ts";
 import { itemTimingBreakdown, qaLatencySegments } from "../../lib/trace.ts";
 
-import { AgentLoopTree } from "./AgentLoopTree.tsx";
 import { DebugTracePanel } from "./DebugTracePanel.tsx";
-import { ExecutionStatusPanel } from "./ExecutionStatusPanel.tsx";
 import { hasToolTrace, judgeReason, segmentStyle } from "./qaShared.ts";
 import type { QaSummaryView, ReviewDraft } from "./qaShared.ts";
 
@@ -56,10 +53,12 @@ function MediaTile({
   media,
   onOpenImage,
   unmatched = false,
+  unmatchedLabel = "未命中",
 }: {
   media: MediaLike;
   onOpenImage: (media: MediaLike) => void;
   unmatched?: boolean;
+  unmatchedLabel?: string;
 }) {
   const src = imageUrl(media);
   return (
@@ -79,7 +78,7 @@ function MediaTile({
       )}
       <span className="image-label">
         {mediaLabel(media)}
-        {unmatched ? <em> · 未召回</em> : null}
+        {unmatched ? <em> · {unmatchedLabel}</em> : null}
       </span>
     </div>
   );
@@ -179,7 +178,7 @@ function QaItemDetail({
   const turns = conversationTurns(detail);
   const chain = itemLayerChain(detail, albumId);
   const taskJudge = dict(detail.task_judge);
-  const taskJudges = Array.isArray(detail.task_judges) ? detail.task_judges : [];
+  const evidenceJudge = dict(detail.evidence_judge);
   // 两个媒体区：候选 vs 显式交付，分开取、分开渲染。
   const recallMedia = toolRecallMedia(detail, albumId);
   const evidenceMedia = itemEvidenceMedia(detail, albumId);
@@ -208,7 +207,6 @@ function QaItemDetail({
           </span>
         ))}
       </div>
-      <DebugTracePanel detail={detail} />
       <section className="qa-layer-chain">
         <div className="qa-layer-chain-head">
           <strong>本题证据链</strong>
@@ -238,41 +236,29 @@ function QaItemDetail({
           <p>{esc(detail.final_answer) || esc(detail.answer) || esc(detail.error) || "未完成"}</p>
           <div className="capability-grid">
             <span>
-              <small>任务判断</small>
-              <b>{taskDecisionLabel(detail)}</b>
-            </span>
-            <span>
-              <small>任务判断结果</small>
-              <b>{taskJudge.correct === true ? "一致" : taskJudge.correct === false ? "不一致" : "未记录"}</b>
-            </span>
-            {taskJudges.length > 1 && (
-              <span>
-                <small>多轮评分口径</small>
-                <b>每轮独立评分，并携带截至该轮的完整对话</b>
-              </span>
-            )}
-            <span>
-              <small>证据对应</small>
-              <b>{evidenceScoreLabel(detail.evidence_judge)}</b>
+              <small>{turns.length > 1 ? "最终一轮回答行为" : "回答行为"}</small>
+              <b>{taskJudge.correct === true ? "符合预期" : taskJudge.correct === false ? "不符合预期" : "未评分"}</b>
+              <small>{taskDecisionLabel(detail)}</small>
             </span>
             <span>
               <small>媒体检索</small>
               <b>{itemRetrievalMetrics(detail)}</b>
             </span>
             <span>
-              <small>JSON 解析</small>
-              <b>{itemParseRate(detail)}</b>
-            </span>
-            <span>
-              <small>步数内完成</small>
+              <small>{turns.length > 1 ? "最终一轮执行状态" : "执行状态"}</small>
               <b>{completionLabel(detail)}</b>
+              {detail.termination_reason ? <small>{turnTerminationLabel(detail)}</small> : null}
             </span>
+            {evidenceJudge.score != null || (evidenceJudge.reason && evidenceJudge.reason !== "not_applicable") ? <span>
+              <small>证据评分</small>
+              <b>{evidenceScoreLabel(detail.evidence_judge)}</b>
+            </span> : null}
           </div>
           <h4>工具召回图片（{recallMedia.length}）</h4>
           <div className="image-grid">
-            {recallMedia.map((media) => (
+            {recallMedia.map((media, mediaIndex) => (
               <MediaTile
-                key={esc(media.asset_id) || esc(media.file_name)}
+                key={`${esc(media.asset_id) || esc(media.file_name)}-${mediaIndex}`}
                 media={media}
                 onOpenImage={onOpenImage}
               />
@@ -281,9 +267,9 @@ function QaItemDetail({
           </div>
           <h4>模型使用图片（{evidenceMedia.length}）</h4>
           <div className="image-grid">
-            {evidenceMedia.slice(0, 3).map((media) => (
+            {evidenceMedia.slice(0, 3).map((media, mediaIndex) => (
               <MediaTile
-                key={`used-${esc(media.asset_id) || esc(media.file_name)}`}
+                key={`used-${esc(media.asset_id) || esc(media.file_name)}-${mediaIndex}`}
                 media={media}
                 onOpenImage={onOpenImage}
               />
@@ -296,9 +282,9 @@ function QaItemDetail({
             <details className="qa-detail-block">
               <summary>查看更多使用图片（{evidenceMedia.length - 3}）</summary>
               <div className="image-grid">
-                {evidenceMedia.slice(3).map((media) => (
+                {evidenceMedia.slice(3).map((media, mediaIndex) => (
                   <MediaTile
-                    key={`used-more-${esc(media.asset_id) || esc(media.file_name)}`}
+                    key={`used-more-${esc(media.asset_id) || esc(media.file_name)}-${mediaIndex}`}
                     media={media}
                     onOpenImage={onOpenImage}
                   />
@@ -312,11 +298,12 @@ function QaItemDetail({
           <p>{esc(detail.reference_answer)}</p>
           <h4>检索 GT 媒体（{gtMedia.length}）</h4>
           <div className="image-grid">
-            {gtMedia.map((media) => (
+            {gtMedia.map((media, mediaIndex) => (
               <MediaTile
-                key={esc(media.asset_id) || `${esc(media.media_type)}-${esc(media.media_id)}`}
+                key={`${esc(media.asset_id) || `${esc(media.media_type)}-${esc(media.media_id)}`}-${mediaIndex}`}
                 media={media}
                 unmatched={media.matched === false}
+                unmatchedLabel={Number(detail.metrics_contract_version) === 2 ? "未交付" : "未命中"}
                 onOpenImage={onOpenImage}
               />
             ))}
@@ -390,10 +377,7 @@ function QaItemDetail({
             </div>
           </div>
         )}
-        <details className="qa-detail-block"><summary>调用性能明细 · Token / TTFT / 工具耗时</summary>
-          <AgentLoopTree detail={detail} modelLabel={modelLabel} />
-        </details>
-        <ExecutionStatusPanel detail={detail} />
+        <DebugTracePanel detail={detail} modelLabel={modelLabel} />
       </section>
       <div className="item-footer">
         <button className="judge-details-trigger" type="button" onClick={() => onOpenJudgeInput(detail)}>

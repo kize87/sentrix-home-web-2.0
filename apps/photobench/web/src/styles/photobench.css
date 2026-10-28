@@ -578,6 +578,7 @@ label,.field-label { display:block; min-width:0; color:var(--muted); font-size:1
 .latency-segment-other { background:#d1d5db; }
 .latency-segment-ttft { background:#93c5fd; }
 .latency-segment-generation { background:#86efac; }
+.latency-segment-model-request { background:#a5b4fc; }
 .latency-segment-tool { background:#fcd34d; }
 .latency-segment[data-tooltip]:hover { z-index:6; }
 .qa-item:has(.latency-segment[data-tooltip]:hover), .call-node:has(.latency-segment[data-tooltip]:hover), .tool-node:has(.latency-segment[data-tooltip]:hover) { z-index:10; }
@@ -591,6 +592,7 @@ label,.field-label { display:block; min-width:0; color:var(--muted); font-size:1
 .latency-dot-other { background:#9ca3af; }
 .latency-dot-ttft { background:#60a5fa; }
 .latency-dot-generation { background:#4ade80; }
+.latency-dot-model-request { background:#818cf8; }
 .latency-dot-tool { background:#f59e0b; }
 .latency-segment-nested-tool { background:#c4b5fd; }
 .latency-dot-nested-tool { background:#8b5cf6; }
@@ -1067,3 +1069,9 @@ details.qa-results-body[open] > summary::before { content:"▾ "; }
 .trace-progress-events { padding:10px; }
 .trace-progress-events pre { max-height:420px; overflow:auto; }
 .trace-execution > summary { margin:8px 0; padding:8px 10px; color:#40547a; cursor:pointer; font-size:12px; }
+
+/* QA统一轨迹：首屏只保留结果摘要，性能随对应调用展开。 */
+.trace-performance-summary { display:flex; flex-wrap:wrap; gap:6px 18px; margin-bottom:12px; color:var(--muted); font-size:11px; }
+.trace-call-performance { margin-bottom:12px; }
+.model-call-node > summary { flex-wrap:wrap; gap:4px 12px; }
+.model-call-body .call-purpose-grid { margin:8px 0; }

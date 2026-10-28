@@ -54,11 +54,19 @@ export function itemRetrievalMetrics(item: MediaLike | null | undefined): string
   return parts.join(" · ");
 }
 
-/** 1.0 `:575-579`。`json_parse_total == null` 回 `未记录`（`0` 是有效值，照常展示）。 */
+/** 原生工具参数和旧版模型动作分开计数；成功数缺失时不补零。 */
 export function itemParseRate(item: MediaLike | null | undefined): string {
   const stability = dict(item?.agent_stability);
-  if (stability.json_parse_total == null) return "未记录";
-  return `${stability.json_parse_success ?? 0}/${stability.json_parse_total} 次模型输出解析为合法动作 (${fmtPct(stability.json_parse_rate)})`;
+  const parts: string[] = [];
+  for (const [prefix, label] of [["tool_argument_json", "工具参数 JSON"], ["json_parse", "模型动作 JSON"]]) {
+    const total = finiteMetric(stability[`${prefix}_total`]);
+    if (total == null || total < 0) continue;
+    if (total === 0) { parts.push(`${label}：无解析调用`); continue; }
+    const success = finiteMetric(stability[`${prefix}_success`]);
+    if (success == null || success < 0 || success > total) { parts.push(`${label}：共 ${total} 次，成功数未记录`); continue; }
+    parts.push(`${label}：${success}/${total} 成功（${fmtPct(success / total)}）`);
+  }
+  return parts.join("；") || "未记录";
 }
 
 // ── 1.0 :611-621 多轮对话 ──────────────────────────────────────────────
