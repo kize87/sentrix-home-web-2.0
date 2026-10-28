@@ -563,7 +563,7 @@ def test_quality_and_classification_filters_include_correct_and_partial_without_
         )
     ]
     # Correctness and runtime anomalies remain independent.
-    cases[0]["events"] = [{"code": "request_timeout", "recovery": "recovered"}]
+    cases[0]["events"] = [{"code": "request_timeout", "recovery": "recovered", "turn": 0}]
     assert [c["index"] for c in cases if matches(c, {"score": "low"})] == [1, 2]
     assert [c["index"] for c in cases if matches(c, {"score": "2", "anomaly": "yes"})] == [0]
     assert [c["index"] for c in cases if matches(c, {"task_type": "T3_enumeration", "score": "low"})] == [1]
@@ -587,12 +587,13 @@ def test_task_aliases_merge_before_counting_and_filters_exports_share_the_catego
     cases = [case_from_item(row, i) for i, row in enumerate(raw)]
     r = report(cases)
     assert raw == before
-    assert r["rule_version"] == 9
+    assert r["rule_version"] == 10
     media, behavior = r["groups"]["content_type"]
     assert media == {
         "value": "T1_retrieve_media",
         "total": 3,
         "failed": 0,
+        "affected": 0,
         "score_2": 1,
         "score_0": 1,
         "score_1": 1,
@@ -673,6 +674,7 @@ def test_content_behavior_and_scenarios_have_separate_denominators_and_preserve_
     r = report(cases)
     assert raw == before
     assert set(r["groups"]) == {
+        "ability_taxonomy_version",
         "ability_family",
         "ability_type",
         "benchmark_group",
@@ -713,7 +715,7 @@ def test_multilabel_heatmap_uses_deduplicated_content_labels_not_joined_keys():
         ),
         0,
     )
-    c["events"] = [{"code": "request_timeout", "recovery": "recovered"}]
+    c["events"] = [{"code": "request_timeout", "recovery": "recovered", "turn": 0}]
     r = report([c])
     assert {x["content_type"] for x in r["heatmap"]} == {"T2_fact_qa", "T1_retrieve_media"}
     assert all(x["count"] == 1 for x in r["heatmap"])

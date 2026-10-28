@@ -1,3 +1,4 @@
+import { QualityRing, TagAnalysis } from "./AnalysisBreakdown.tsx";
 import type { AnalysisFilters, AnalysisView } from "../../api/analysis.ts";
 import {
   displayLabel,
@@ -104,6 +105,7 @@ export function AnalysisFiltersBar({
         ])}
         {select("ability_family")}
         {select("ability_type")}
+        {select("benchmark_group")}
       </div>
       <div className="analysis-filter-row">
         <span className="analysis-filter-title">执行</span>
@@ -119,7 +121,7 @@ export function AnalysisFiltersBar({
         <summary>属性与回答行为</summary>
         <div className="analysis-filter-row">
           {[
-            "benchmark_group",
+            "ability_taxonomy_version",
             "difficulty",
             "answerability",
             "media_type",
@@ -195,16 +197,25 @@ export function AnalysisWorkspace({
   unit?: string;
 }) {
   const r = data.summary;
-  const savedLabel = (v: string) =>
-    displayWithLabels(v, r.ability_labels || {});
-  const groups = unit === "turn" ? r.turn_groups || {} : r.groups;
+  const currentUnit = unit === "turn" ? "turn" : "qa";
+  const noun = currentUnit === "turn" ? "轮" : "题";
+  const total =
+    currentUnit === "turn" ? r.denominators.turns || 0 : r.item_count;
+  const scoreCount = (s: string) =>
+    r.counts[`${currentUnit === "turn" ? "turn_" : ""}score_${s}`] || 0;
+  const qualityValid =
+    currentUnit === "turn"
+      ? r.denominators.turn_quality_valid
+      : r.denominators.quality_valid;
+  const coverage = r.group_partitions?.[currentUnit]?.ability_family;
+  const versions = r.ability_taxonomy_versions || [];
   return (
     <>
       <div role="tablist" aria-label="分析视图" className="analysis-tabs">
         {(
           [
             ["overview", "结果概览"],
-            ["ability", "能力表现"],
+            ["ability", "题型与标签"],
             ["execution", "执行问题"],
             ["behavior", "回答行为"],
           ] as const
@@ -219,6 +230,21 @@ export function AnalysisWorkspace({
           </button>
         ))}
       </div>
+      <div className="analysis-annotation-notice">
+        <span>标签来源：本次运行保存的题目及冻结题库快照</span>
+        <span>版本：{versions.length ? versions.join("、") : "未记录"}</span>
+        {coverage && (
+          <span>
+            一级能力已标注 {coverage.labeled || 0}/{coverage.total} {noun}
+          </span>
+        )}
+        {!!coverage?.unknown && (
+          <span>
+            有 {coverage.unknown} {noun}缺少标签，单列为未知。
+          </span>
+        )}
+        {!versions.length && <span>旧结果不能仅凭题号套用最新标签。</span>}
+      </div>
       <div role="tabpanel" className="analysis-view">
         {tab === "overview" && (
           <>
@@ -230,20 +256,54 @@ export function AnalysisWorkspace({
                   onClick={() => filter({ score: s.value })}
                 >
                   <span>{s.short}</span>
-                  <strong>{r.counts[`score_${s.value}`] || 0}</strong>
-                  <small>
-                    {percent(r.counts[`score_${s.value}`] || 0, r.item_count)}
-                  </small>
+                  <strong>{scoreCount(s.value)}</strong>
+                  <small>{percent(scoreCount(s.value), total)}</small>
                 </button>
               ))}
             </div>
             <p className="analysis-lead">
-              满分率{" "}
-              <b>
-                {percent(r.counts.score_2 || 0, r.denominators.quality_valid)}
-              </b>{" "}
-              · 有效评分 {r.denominators.quality_valid}/{r.item_count} 题
+              满分率 <b>{percent(scoreCount("2"), qualityValid)}</b> · 有效评分{" "}
+              {qualityValid || 0}/{total} {noun}
             </p>
+            <div className="analysis-overview-charts">
+              <QualityRing report={r} filter={filter} unit={currentUnit} />
+              <article className="analysis-chart-card">
+                <h4>题型覆盖</h4>
+                <div className="analysis-family-cards">
+                  {(r.groups.ability_family || []).map((x) => (
+                    <button
+                      key={x.value}
+                      onClick={() => {
+                        setTab("ability");
+                        filter({
+                          ability_family: x.value,
+                          ability_type: "",
+                          content_unit: "qa",
+                        });
+                      }}
+                    >
+                      <span>
+                        {displayWithLabels(x.value, r.ability_labels || {})}
+                      </span>
+                      <b>{x.total} 题</b>
+                      <small>
+                        满分{" "}
+                        {percent(
+                          Number(x.score_2 || 0),
+                          x.total - Number(x.score_None || 0),
+                        )}
+                      </small>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="analysis-link"
+                  onClick={() => setTab("ability")}
+                >
+                  查看二级题型、标签表现与问题矩阵 →
+                </button>
+              </article>
+            </div>
             <div className="analysis-runtime-summary">
               <button
                 className="btn compact"
@@ -305,54 +365,7 @@ export function AnalysisWorkspace({
           </>
         )}
         {tab === "ability" && (
-          <>
-            {["ability_family", "ability_type"].map((key) => (
-              <div key={key}>
-                <h4>{dimensions[key]}</h4>
-                <div className="analysis-table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>能力</th>
-                        <th>{unit === "turn" ? "轮数" : "题数"}</th>
-                        <th>满分</th>
-                        <th>部分完成</th>
-                        <th>未完成</th>
-                        <th>未评分</th>
-                        <th>满分率</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(groups[key] || []).map((x) => (
-                        <tr key={x.value}>
-                          <td>
-                            <button
-                              className="analysis-link"
-                              onClick={() => filter({ [key]: x.value })}
-                            >
-                              {savedLabel(x.value)}
-                            </button>
-                          </td>
-                          <td>{x.total}</td>
-                          <td>{x.score_2 || 0}</td>
-                          <td>{x.score_1 || 0}</td>
-                          <td>{x.score_0 || 0}</td>
-                          <td>{x.score_None || 0}</td>
-                          <td>
-                            {percent(
-                              Number(x.score_2 || 0),
-                              x.total - Number(x.score_None || 0),
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-            <p className="analysis-hint">多标签题会出现在多个类别中。</p>
-          </>
+          <TagAnalysis report={r} filter={filter} unit={currentUnit} />
         )}
         {tab === "execution" && (
           <>

@@ -90,6 +90,14 @@ export interface AnalysisReport {
   result_fingerprint: string;
   gt_fingerprint: string;
   annotation_fingerprint?: string;
+  group_partitions?: Record<string, Record<string, GroupPartition>>;
+  group_errors?: {
+    unit: string;
+    dimension: string;
+    value: string;
+    code: string;
+    count: number;
+  }[];
   counts: Record<string, number>;
   denominators: Record<string, number>;
   errors: {
@@ -111,6 +119,15 @@ export interface AnalysisReport {
   ability_heatmap?: { ability_family: string; code: string; count: number }[];
   behavior_matrix: { expected: string; actual: string; count: number }[];
   definitions: string[];
+}
+export interface GroupPartition {
+  total: number;
+  labeled: number;
+  unknown: number;
+  not_applicable: number;
+  multi_labeled: number;
+  exclusive: boolean;
+  exhaustive: boolean;
 }
 export interface ComparisonReport {
   comparable: boolean;

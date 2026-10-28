@@ -10,6 +10,7 @@ from photobench.domain.error_analysis.taxonomy import category_value
 
 EVENT_FIELDS = {"code", "recovery", "tool_name", "issue_kind", "failure_reason", "component"}
 TURN_FIELDS = {
+    "ability_taxonomy_version",
     "ability_family",
     "ability_type",
     "benchmark_group",

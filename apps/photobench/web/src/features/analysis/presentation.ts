@@ -1,6 +1,7 @@
 import { taxonomyLabels, abilityVersionLabels } from "../../lib/qaTaxonomy.ts";
 /** Display the dataset's saved labels; never infer a missing classification. */
 export const dimensions: Record<string, string> = {
+  ability_taxonomy_version: "标签版本",
   ability_family: "一级能力",
   ability_type: "二级能力",
   benchmark_group: "测试分组",
@@ -151,6 +152,7 @@ export const toolLabel = (name: string) =>
     : name;
 
 const special: Record<string, string> = {
+  None: "未评分",
   unknown: "未记录",
   no_text_detected: "未取得已存文字",
   embedder_unavailable: "嵌入服务不可用",

@@ -14,6 +14,11 @@ vi.mock("../../api/client.ts", () => ({
   api: vi.fn(),
   post: vi.fn(),
 }));
+vi.mock("./AnalysisCharts.tsx", () => ({
+  AnalysisChart: ({ label }: { label: string }) => (
+    <div role="img" aria-label={label} />
+  ),
+}));
 const scrollIntoView = vi.fn();
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = scrollIntoView;

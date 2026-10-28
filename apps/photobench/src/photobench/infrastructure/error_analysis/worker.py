@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from photobench.domain.datasets.qa_taxonomy import snapshot_metadata
-from photobench.domain.error_analysis.rules import Aggregator, case_from_item, compare_reports, fingerprint
+from photobench.domain.error_analysis.rules import (
+    Aggregator,
+    case_from_item,
+    compare_reports,
+    fingerprint,
+    snapshot_annotations,
+)
 from photobench.infrastructure.error_analysis.ai_worker import run_ai
 from photobench.infrastructure.results.store import committed_path, run_lock
 
@@ -37,6 +43,7 @@ def source(root: Path, run_id: str) -> dict[str, Any]:
         return {
             "run_id": run_id,
             "qa_snapshot": snapshot_metadata(state.get("qa_snapshot") or {}),
+            "_qa_rows": (state.get("qa_snapshot") or {}).get("rows") or [],
             "path": str(rows if rows.is_file() else selected / "run.json"),
             "format": "jsonl" if rows.is_file() else "legacy_run_json",
             "revision": fingerprint(identity),
@@ -174,11 +181,16 @@ def run_worker(
                         if value == "valid":
                             coverage["component_valid"][key] = coverage["component_valid"].get(key, 0) + 1
             src["telemetry_coverage"] = coverage
+            saved_rows = src.pop("_qa_rows", [])
+            saved_by_id = {r["qa_id"]: r for r in saved_rows if r.get("qa_id")}
+            if len(saved_by_id) != len(saved_rows):
+                saved_by_id = {}  # Ambiguous snapshots cannot supply missing labels.
+            src["ability_annotation_source"] = "run_item_or_frozen_qa_snapshot"
             aggregate = Aggregator()
             with (target / "cases.jsonl").open("w", encoding="utf-8") as out:
                 for i, item in enumerate(lines(pinned)):
                     check()
-                    case = case_from_item(item, i)
+                    case = case_from_item(snapshot_annotations(item, saved_by_id.get(item.get("qa_id"))), i)
                     aggregate.add(case)
                     out.write(json.dumps(case, ensure_ascii=False) + "\n")
                     if i % 10 == 0:

@@ -94,6 +94,24 @@ class BehaviorGroup(BaseModel):
     missing: int
 
 
+class GroupPartition(BaseModel):
+    total: int
+    labeled: int = 0
+    unknown: int = 0
+    not_applicable: int = 0
+    multi_labeled: int = 0
+    exclusive: bool
+    exhaustive: bool
+
+
+class GroupError(BaseModel):
+    unit: Literal["qa", "turn"]
+    dimension: str
+    value: str
+    code: str
+    count: int
+
+
 class AnalysisReport(BaseModel):
     model_config = ConfigDict(extra="allow")
     schema_version: int
@@ -105,6 +123,8 @@ class AnalysisReport(BaseModel):
     ability_taxonomy_versions: list[str] = Field(default_factory=list)
     ability_labels: dict[str, str] = Field(default_factory=dict)
     annotation_fingerprint: str | None = None
+    group_partitions: dict[str, dict[str, GroupPartition]] = Field(default_factory=dict)
+    group_errors: list[GroupError] = Field(default_factory=list)
     turn_groups: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     item_count: int
     counts: dict[str, int]
@@ -208,6 +228,7 @@ class AnalysisQuery(BaseModel):
     conversation_type: str = ""
     ability_family: str = ""
     ability_type: str = ""
+    ability_taxonomy_version: str = ""
     benchmark_group: str = ""
     content_type: str = ""
     content_subtype: str = ""

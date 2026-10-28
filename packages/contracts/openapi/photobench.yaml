@@ -1039,6 +1039,13 @@ paths:
           type: string
           default: ''
           title: Ability Type
+      - name: ability_taxonomy_version
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Ability Taxonomy Version
       - name: benchmark_group
         in: query
         required: false
@@ -1339,6 +1346,13 @@ paths:
           type: string
           default: ''
           title: Ability Type
+      - name: ability_taxonomy_version
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Ability Taxonomy Version
       - name: benchmark_group
         in: query
         required: false
@@ -1671,6 +1685,13 @@ paths:
           type: string
           default: ''
           title: Ability Type
+      - name: ability_taxonomy_version
+        in: query
+        required: false
+        schema:
+          type: string
+          default: ''
+          title: Ability Taxonomy Version
       - name: benchmark_group
         in: query
         required: false
@@ -2219,6 +2240,18 @@ components:
           - type: string
           - type: 'null'
           title: Annotation Fingerprint
+        group_partitions:
+          additionalProperties:
+            additionalProperties:
+              $ref: '#/components/schemas/GroupPartition'
+            type: object
+          type: object
+          title: Group Partitions
+        group_errors:
+          items:
+            $ref: '#/components/schemas/GroupError'
+          type: array
+          title: Group Errors
         turn_groups:
           additionalProperties:
             items:
@@ -2856,6 +2889,67 @@ components:
       - result_fingerprint
       - item
       title: EvidenceSnapshot
+    GroupError:
+      properties:
+        unit:
+          type: string
+          enum:
+          - qa
+          - turn
+          title: Unit
+        dimension:
+          type: string
+          title: Dimension
+        value:
+          type: string
+          title: Value
+        code:
+          type: string
+          title: Code
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - unit
+      - dimension
+      - value
+      - code
+      - count
+      title: GroupError
+    GroupPartition:
+      properties:
+        total:
+          type: integer
+          title: Total
+        labeled:
+          type: integer
+          title: Labeled
+          default: 0
+        unknown:
+          type: integer
+          title: Unknown
+          default: 0
+        not_applicable:
+          type: integer
+          title: Not Applicable
+          default: 0
+        multi_labeled:
+          type: integer
+          title: Multi Labeled
+          default: 0
+        exclusive:
+          type: boolean
+          title: Exclusive
+        exhaustive:
+          type: boolean
+          title: Exhaustive
+      type: object
+      required:
+      - total
+      - exclusive
+      - exhaustive
+      title: GroupPartition
     HTTPValidationError:
       properties:
         detail:

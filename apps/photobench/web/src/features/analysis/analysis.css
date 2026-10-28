@@ -524,3 +524,110 @@
     min-width: 100%;
   }
 }
+
+.analysis-annotation-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  padding: 12px 14px;
+  background: #f4f7fb;
+  border: 1px solid #e0e7f0;
+  border-radius: 8px;
+  margin: 14px 0;
+  color: #52677e;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.analysis-overview-charts {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.9fr) minmax(0, 1.5fr);
+  gap: 16px;
+  margin: 16px 0;
+}
+.analysis-chart-card,
+.analysis-tag-section {
+  min-width: 0;
+  border: 1px solid #dfe7ef;
+  border-radius: 12px;
+  padding: 16px;
+  background: #fff;
+}
+.analysis-chart-legend,
+.analysis-family-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.analysis-chart-legend {
+  justify-content: center;
+}
+.analysis-chart-legend button {
+  border: 0;
+  background: transparent;
+  color: #4c6076;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.analysis-chart-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.analysis-family-cards {
+  margin: 20px 0;
+}
+.analysis-family-cards button {
+  flex: 1 1 150px;
+  border: 1px solid #e1e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: left;
+  background: #f8fafc;
+  color: #3e5871;
+  cursor: pointer;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.analysis-family-cards small {
+  color: #6b7f94;
+}
+.analysis-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 8px;
+}
+.analysis-segmented button {
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 14px;
+  background: transparent;
+  color: #5f7388;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.analysis-segmented button[aria-pressed="true"] {
+  background: #fff;
+  color: #275f96;
+  box-shadow: 0 1px 4px #213c5a14;
+}
+.analysis-tag-section .analysis-toolbar button[aria-pressed="false"] {
+  border: 0;
+  background: transparent;
+}
+@media (max-width: 800px) {
+  .analysis-overview-charts {
+    grid-template-columns: 1fr;
+  }
+  .analysis-tag-section {
+    padding: 10px;
+  }
+}

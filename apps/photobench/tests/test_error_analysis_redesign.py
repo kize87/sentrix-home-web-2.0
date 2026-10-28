@@ -435,3 +435,173 @@ def test_evidence_includes_recorded_model_io_and_ledger_with_exact_paths():
     assert package["availability"][0]["model_io_recorded"] is True
     facts = scope_facts([case(0), case(1, judge={"score": 2})])
     assert facts["item_count"] == 2 and facts["counts"]["score_0"] == facts["counts"]["score_2"] == 1
+
+
+def labels_v2(primary=None, group="ordinary"):
+    from photobench.domain.datasets.ability_taxonomy import ABILITY_VERSION
+
+    primary = primary or []
+    return dict(
+        ability_taxonomy_version=ABILITY_VERSION,
+        ability_primary_ids=primary,
+        ability_supporting_ids=["P1"] if primary == ["P3"] else [],
+        ability_family_ids=(
+            ["H"]
+            if group == "hallucination"
+            else ["I"]
+            if group == "injection"
+            else sorted({p[0] for p in primary})
+        ),
+        benchmark_group=group,
+    )
+
+
+def aggregate(cases):
+    agg = Aggregator()
+    for row in cases:
+        agg.add(row)
+    return {**agg.report({}), "generated_at": 1, "result_fingerprint": "fixed"}
+
+
+def test_partitions_detect_overlap_even_when_memberships_equal_labeled_population():
+    cases = [case(0, **labels_v2(["P3", "R1"])), case(1), case(2, **labels_v2([], "hallucination"))]
+    r = aggregate(cases)
+    p = r["group_partitions"]["qa"]["ability_family"]
+    assert p["total"] == 3 and p["labeled"] == 2
+    assert p["multi_labeled"] == 1 and p["unknown"] == 1
+    assert not p["exclusive"] and p["exhaustive"]
+    # Counts of known memberships equal the entire population despite overlap + missing.
+    assert sum(x["total"] for x in r["groups"]["ability_family"] if x["value"] != "unknown") == 3
+    assert r["group_partitions"]["qa"]["benchmark_group"]["exclusive"]
+    assert r["group_partitions"]["qa"]["ability_type"]["not_applicable"] == 1
+    assert "P1" not in {x["value"] for x in r["groups"]["ability_type"]}  # supporting only
+    assert not aggregate([])["group_partitions"]["qa"]
+
+
+def test_tag_issue_matrix_deduplicates_events_and_respects_filtered_turns():
+    c = case(
+        **labels_v2(["P3", "R1"]),
+        runtime_turns=[
+            {"message": "look", "expected_action": "answer", "judge": {"score": 0}, **labels_v2(["P3"])},
+            {"message": "count", "expected_action": "answer", "judge": {"score": 2}, **labels_v2(["R1"])},
+        ],
+        tool_trace=[
+            {
+                "tool": "read_photo_text",
+                "status": "partial",
+                "conversation_turn": 0,
+                "result": {"failure_reason": "no_text_detected"},
+            },
+            {
+                "tool": "read_photo_text",
+                "status": "partial",
+                "conversation_turn": 0,
+                "result": {"failure_reason": "no_text_detected"},
+            },
+        ],
+    )
+    r = aggregate([c])
+    key = {
+        "unit": "turn",
+        "dimension": "ability_type",
+        "value": "P3",
+        "code": "evidence_unavailable",
+        "count": 1,
+    }
+    assert key in r["group_errors"]
+    assert not any(x["value"] == "R1" and x["unit"] == "turn" for x in r["group_errors"])
+    view = filtered_view([c], r, {"content_unit": "turn", "ability_type": "R1"}, 1, 1)
+    assert view["summary"]["group_partitions"]["turn"]["ability_type"]["total"] == 1
+    assert view["summary"]["group_errors"] == []
+    row = view["summary"]["turn_groups"]["ability_type"][0]
+    assert row["value"] == "R1" and row["score_2"] == 1 and row["affected"] == 0
+    view = filtered_view(
+        [c], r, {"content_unit": "turn", "ability_type": "P3", "code": "evidence_unavailable"}, 1, 1
+    )
+    assert view["summary"]["counts"]["events"] == 2
+    assert view["summary"]["group_errors"][0]["count"] == 1
+
+
+def test_snapshot_labels_use_frozen_source_and_keep_existing_versions():
+    import copy
+
+    from photobench.domain.error_analysis.rules import snapshot_annotations
+
+    saved = {"qa_id": "q0", "question": "find", **labels_v2(["P3"])}
+    raw = {"qa_id": "q0", "question": "find", "answer": "a", "judge": {"score": 2}}
+    before = copy.deepcopy(raw)
+    enriched = snapshot_annotations(raw, saved)
+    assert raw == before
+    assert enriched["ability_annotation_source"] == "run_qa_snapshot"
+    assert case_from_item(enriched, 0)["dimension_labels"]["ability_type"] == ["P3"]
+    assert snapshot_annotations(raw, {**saved, "question": "changed"}) == raw
+    assert snapshot_annotations(raw, {**saved, "qa_id": "another"}) == raw
+    existing = {**raw, "ability_taxonomy_version": "ability-2026.10.28-v1"}
+    assert snapshot_annotations(existing, saved) == existing
+    turns = [{"message": "first", **labels_v2(["P3"])}, {"message": "second", **labels_v2(["R1"])}]
+    saved = {**saved, "conversation": turns}
+    raw["runtime_turns"] = [{"message": "first"}, {"message": "second"}]
+    enriched = snapshot_annotations(raw, saved)
+    assert [t["ability_primary_ids"] for t in enriched["runtime_turns"]] == [["P3"], ["R1"]]
+    assert (
+        snapshot_annotations({**raw, "runtime_turns": [{"message": "first"}]}, saved).get(
+            "ability_taxonomy_version"
+        )
+        is None
+    )
+    assert (
+        snapshot_annotations(
+            {**raw, "runtime_turns": [{"message": "changed"}, {"message": "second"}]}, saved
+        ).get("ability_taxonomy_version")
+        is None
+    )
+
+
+def test_version_filter_is_shared_by_api_statistics_and_export(tmp_path):
+    from test_error_analysis import atomic, await_job, write_run
+
+    from photobench.domain.datasets.ability_taxonomy import ABILITY_VERSION, LEGACY_ABILITY_VERSION
+
+    root = tmp_path / "results"
+    saved = {"qa_id": "q0", "question": "find", **labels_v2(["P3"])}
+    raw = {"qa_id": "q0", "question": "find", "answer": "a", "judge": {"score": 2}}
+    write_run(
+        root,
+        items=[
+            raw,
+            {**raw, "qa_id": "q1", **labels_v2(["P3"]), "ability_taxonomy_version": LEGACY_ABILITY_VERSION},
+            {**raw, "qa_id": "unknown"},
+        ],
+    )
+    path = root / "r" / "run.json"
+    state = json.loads(path.read_text())
+    state["qa_snapshot"] = {"rows": [saved]}
+    atomic(path, state)
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    atomic(
+        cfg / "judge_providers.json",
+        {
+            "default_provider_id": "test",
+            "providers": {"test": {"url": "http://127.0.0.1:1/v1", "model": "unused"}},
+        },
+    )
+    atomic(cfg / "vllm_targets.json", {"default_target_id": "local", "targets": {"local": {}}})
+    app = create_app(
+        Settings(config_root=cfg, results_root=root, data_root=tmp_path / "empty"), scan_in_background=False
+    )
+    with TestClient(app) as client:
+        key = client.post("/api/v1/runs/r/analysis", json={"kind": "rules"}).json()["job_id"]
+        assert await_job(app.state.container.analysis_backend, key)["status"] == "completed"
+        url = f"/api/v1/analyses/{key}"
+        response = client.get(url + "/view?ability_taxonomy_version=" + ABILITY_VERSION)
+        assert response.status_code == 200
+        view = response.json()
+        assert view["total"] == 1
+        assert view["items"][0]["ability_annotation_source"] == "run_qa_snapshot"
+        assert view["summary"]["ability_taxonomy_versions"] == [ABILITY_VERSION]
+        assert view["summary"]["group_partitions"]["qa"]["ability_type"]["exclusive"]
+        exported = client.get(url + "/export?format=json&ability_taxonomy_version=" + ABILITY_VERSION).json()
+        assert [x["index"] for x in exported["cases"]] == [0]
+        assert client.get(url + "/view?ability_taxonomy_version=unknown").json()["total"] == 1
+    assert json.loads(path.read_text()) == state

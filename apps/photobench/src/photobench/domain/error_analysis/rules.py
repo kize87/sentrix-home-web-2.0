@@ -18,7 +18,7 @@ from photobench.domain.error_analysis.taxonomy import (
 )
 from photobench.domain.runs.analysis import judge_score_for_summary, retrieval_metric_eligible
 
-RULE_VERSION = 9
+RULE_VERSION = 10
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -73,6 +73,34 @@ def fingerprint(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()
     ).hexdigest()
+
+
+def snapshot_annotations(item: dict[str, Any], saved: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Recover labels only from this run's frozen QA, never the current dataset."""
+    if item.get("ability_taxonomy_version") or not saved or not saved.get("ability_taxonomy_version"):
+        return item
+    if item.get("qa_id") != saved.get("qa_id"):
+        return item
+    runtime = item.get("runtime_turns") or []
+    conversation = saved.get("conversation") or []
+    if conversation and (
+        len(runtime) != len(conversation)
+        or any(
+            (t.get("message") or t.get("question")) != (s.get("message") or s.get("question"))
+            for t, s in zip(runtime, conversation, strict=True)
+        )
+    ):
+        return item
+    if not conversation and item.get("question") != saved.get("question"):
+        return item
+    result = {**item, **{k: saved[k] for k in ABILITY_FIELDS if k in saved}}
+    if runtime and conversation and len(runtime) == len(conversation):
+        result["runtime_turns"] = [
+            {**t, **{k: s[k] for k in ABILITY_FIELDS if k in s}}
+            for t, s in zip(runtime, conversation, strict=True)
+        ]
+    result["ability_annotation_source"] = "run_qa_snapshot"
+    return result
 
 
 def classify(call: Mapping[str, Any]) -> tuple[str, str]:
@@ -361,6 +389,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         turn_rows.append(
             {
                 **ability_dimensions(annotation),
+                "ability_taxonomy_version": saved_labels(annotation.get("ability_taxonomy_version")),
                 "content_type": turn_content,
                 "content_subtype": turn_subtype,
                 "difficulty": saved_labels(annotation.get("difficulty")),
@@ -549,6 +578,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
     )
     dimension_labels["test_scenario"] = sorted({v for t in turn_rows for v in t["test_scenarios"]})
     dimension_labels.update(ability_dimensions(item))
+    dimension_labels["ability_taxonomy_version"] = saved_labels(item.get("ability_taxonomy_version"))
     dimensions = {k: " / ".join(values) for k, values in dimension_labels.items()}
     dimensions.update(
         media_type="mixed" if len(media) > 1 else next(iter(media), "unknown"),
@@ -693,6 +723,8 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         "dimensions": dimensions,
         "dimension_labels": dimension_labels,
         "ability_taxonomy_version": item.get("ability_taxonomy_version"),
+        "ability_annotation_source": item.get("ability_annotation_source")
+        or ("run_item" if item.get("ability_taxonomy_version") else "unrecorded"),
         "ability_labels": ability_labels([str(item.get("ability_taxonomy_version"))]),
         "source_labels": source_labels,
         "events": events,
@@ -728,6 +760,7 @@ class Aggregator:
             k: {}
             for k in (
                 "ability_family",
+                "ability_taxonomy_version",
                 "ability_type",
                 "benchmark_group",
                 "content_type",
@@ -747,6 +780,8 @@ class Aggregator:
         self.judge_definitions: set[str] = set()
         self.agent_limits: dict[str, dict[str, Any]] = {}
         self.context_windows: set[int] = set()
+        self.partitions: dict[str, dict[str, Counter[str]]] = {"qa": {}, "turn": {}}
+        self.group_errors: dict[tuple[str, str, str, str], int] = Counter()
 
     def add(self, case: dict[str, Any]) -> None:
         self.total += 1
@@ -794,6 +829,25 @@ class Aggregator:
                 row["total"] += 1
                 row["score_" + str(case["score"])] += 1
                 row["failed"] += case["execution"] == "failed"
+                row["affected"] += bool(case["events"])
+        # Inspect each membership set: equal column totals alone cannot prove a partition.
+        for unit, record, events in [
+            ("qa", case["dimension_labels"], case["events"]),
+            *[("turn", t, [e for e in case["events"] if e["turn"] == t["turn"]]) for t in case["turns"]],
+        ]:
+            dimensions = QUALITY_DIMENSIONS if unit == "qa" else tuple(self.turn_groups)
+            for dim in dimensions:
+                values = set(record.get(dim) or ["unknown"])
+                stats = self.partitions[unit].setdefault(dim, Counter())
+                stats["total"] += 1
+                stats["multi_labeled"] += len(values) > 1
+                stats["unknown"] += bool(values & {"unknown", "pending_review"})
+                stats["not_applicable"] += "not_applicable" in values
+                stats["labeled"] += bool(values - {"unknown", "pending_review", "not_applicable"})
+                for value in values:
+                    for code in {e["code"] for e in events}:
+                        group_key = (unit, dim, value, code)
+                        self.group_errors[group_key] = self.group_errors.get(group_key, 0) + 1
         for code in sorted({e["code"] for e in case["events"]}):
             es = [e for e in case["events"] if e["code"] == code]
             row = self.errors.setdefault(code, Counter())
@@ -819,6 +873,10 @@ class Aggregator:
                     row = groups.setdefault(value, Counter())
                     row["total"] += 1
                     row["score_" + str(turn["score"])] += 1
+                    row["affected"] += any(e["turn"] == turn["turn"] for e in case["events"])
+                    row["failed"] += bool(
+                        turn["termination_reason"] and turn["termination_reason"] not in NORMAL
+                    )
             self.counts["turns"] += 1
             self.counts["turn_score_" + str(turn["score"])] += 1
             expected, actual = turn["expected"], turn["actual"]
@@ -853,6 +911,21 @@ class Aggregator:
             },
             "gt_fingerprint": self.gt_hash.hexdigest(),
             "annotation_fingerprint": self.annotation_hash.hexdigest(),
+            "group_partitions": {
+                unit: {
+                    dim: {
+                        **dict(stats),
+                        "exclusive": stats["multi_labeled"] == 0,
+                        "exhaustive": stats["total"] > 0,
+                    }
+                    for dim, stats in dimensions.items()
+                }
+                for unit, dimensions in self.partitions.items()
+            },
+            "group_errors": [
+                {"unit": unit, "dimension": dim, "value": value, "code": code, "count": n}
+                for (unit, dim, value, code), n in sorted(self.group_errors.items())
+            ],
             "turn_groups": {
                 k: [{"value": v, **dict(c)} for v, c in rows.items()] for k, rows in self.turn_groups.items()
             },

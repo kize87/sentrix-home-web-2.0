@@ -44,7 +44,7 @@ export function AnalysisChart({
     // recreate labels, so submitting identical options restarts their fade-in.
     const nextOption = JSON.stringify(option);
     if (!instance.current || renderedOption.current === nextOption) return;
-    instance.current.setOption({ ...option, animation: false }, { replaceMerge: ["series"] });
+    instance.current.setOption({ ...option, animation: false }, { replaceMerge: ["series", "xAxis", "yAxis", "visualMap", "legend", "graphic", "grid"] });
     renderedOption.current = nextOption;
   }, [option]);
   return (
