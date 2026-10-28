@@ -102,6 +102,8 @@ class FunAsrSidecarTranscriber:
                     alignment_score=_optional_float(item.get("alignment_score")),
                     speech_probability=_optional_float(item.get("speech_probability")),
                     language_probability=_optional_float(item.get("language_probability")),
+                    local_speaker_label=str(item.get("speaker_label") or "").strip(),
+                    speaker_confidence=_optional_float(item.get("speaker_confidence")),
                 )
             )
         model_name = str(payload.get("model_name") or "").strip()

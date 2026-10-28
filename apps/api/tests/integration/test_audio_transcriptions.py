@@ -81,6 +81,8 @@ def test_raw_and_accepted_transcripts_are_stored_separately(migrations_ready_db)
                 quality_status=SegmentQualityStatus.ACCEPTED,
                 quality_reasons=(),
                 searchable=True,
+                local_speaker_label="0",
+                speaker_confidence=0.93,
             ),
             AudioTranscriptSegment(
                 id="seg_2",
@@ -109,3 +111,5 @@ def test_raw_and_accepted_transcripts_are_stored_separately(migrations_ready_db)
     segments = repository.list_segments(stored.id)
     assert [item.searchable for item in segments] == [True, False]
     assert segments[1].quality_reasons == ("low_confidence",)
+    assert segments[0].local_speaker_label == "0"
+    assert segments[0].speaker_confidence == 0.93

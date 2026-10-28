@@ -134,6 +134,8 @@ class TranscribeAudio:
                     quality_status=decision.status,
                     quality_reasons=decision.reasons,
                     searchable=decision.searchable,
+                    local_speaker_label=source.local_speaker_label,
+                    speaker_confidence=source.speaker_confidence,
                 )
             )
 

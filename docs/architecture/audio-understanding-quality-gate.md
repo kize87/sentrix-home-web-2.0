@@ -191,7 +191,8 @@ metadata    = {asset_id, start_ms, end_ms, confidence}
 4. accepted / uncertain / rejected 门禁；
 5. 可信片段进入 FTS 和现有文本向量空间；
 6. 检索结果保留音频时间位置；
-7. 模型或配置变化后可重跑、重建索引。
+7. CAM++ 单媒体匿名说话人划分，标签与分段时间戳、文字一起落库；
+8. 模型或配置变化后可重跑、重建索引。
 
 导入接口通过 `audio_transcription_status` 返回 `completed`、`review` 或 `failed`；ASR 失败
 不会回滚已经入库的音频或视频资产，但也不会伪装成一次完整成功。
@@ -204,16 +205,18 @@ metadata    = {asset_id, start_ms, end_ms, confidence}
 - 权威仓储：`infrastructure/persistence/repositories/audio_transcriptions.py`；
 - 导入编排：`application/media/transcribe_audio.py`；
 - 分段向量：`application/retrieval/index_audio_transcript.py`；
-- 数据库迁移：`0015_audio_transcriptions.sql`（`0014` 已由上游记忆图迁移占用）。
+- 数据库迁移：`0015_audio_transcriptions.sql`、`0016_audio_speakers.sql`。
 
-第一版明确不实现 Qwen 摘要、情绪识别和说话人识别。`confidence_calibrated` 与总体
+第一版明确不实现 Qwen 摘要、情绪识别和跨媒体真实人物识别。CAM++ 的
+`local_speaker_label` 只在当前媒体内区分匿名说话人，不映射人物姓名。`confidence_calibrated` 与总体
 `quality_score` 在建立真实家庭录音验证集前保持空值，不把模型原始分数冒充校准分数。
 
 当前 Paraformer 输出如果没有置信度/对齐分数，第一版会依靠时长、字符率、乱码与重复等
 结构规则放行，同时给该片段记录 `no_acoustic_score`。这能维持检索可用性，但还不能可靠拦住
 “句子通顺、实际听错”的情况；在完成真实录音验证和分数校准前，这属于已知限制。
 
-第一版暂不实现说话人分离、声纹身份、LLM 自动纠错、LLM 摘要和独立音频向量模型。
+第一版已实现单媒体匿名说话人划分；暂不实现跨媒体声纹身份、真实人物映射、LLM 自动纠错、
+LLM 摘要和独立音频向量模型。
 
 ## 9. 验证与本地运行
 

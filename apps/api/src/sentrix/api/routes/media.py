@@ -459,6 +459,8 @@ def _transcription_response(
                 quality_status=segment.quality_status.value,
                 quality_reasons=list(segment.quality_reasons),
                 searchable=segment.searchable,
+                local_speaker_label=segment.local_speaker_label,
+                speaker_confidence=segment.speaker_confidence,
             )
             for segment in segments
         ],

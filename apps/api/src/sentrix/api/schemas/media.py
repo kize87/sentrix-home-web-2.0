@@ -63,6 +63,8 @@ class AudioTranscriptSegmentResponse(BaseModel):
     quality_status: str
     quality_reasons: list[str]
     searchable: bool
+    local_speaker_label: str
+    speaker_confidence: float | None
 
 
 class AudioTranscriptionResponse(BaseModel):

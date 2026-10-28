@@ -38,6 +38,10 @@ class AsrSegment:
     alignment_score: float | None = None
     speech_probability: float | None = None
     language_probability: float | None = None
+    # FunASR + CAM++ 在单个媒体文件内生成的匿名说话人标签（例如 ``0`` / ``1``）。
+    # 它不是跨文件稳定身份，更不是已确认人物 id。
+    local_speaker_label: str = ""
+    speaker_confidence: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +73,9 @@ class AudioTranscriptSegment:
     quality_status: SegmentQualityStatus
     quality_reasons: tuple[str, ...]
     searchable: bool
+    # 与 AsrSegment 同口径：只表示当前录音内的匿名说话人划分。
+    local_speaker_label: str = ""
+    speaker_confidence: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

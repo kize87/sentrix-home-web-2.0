@@ -40,7 +40,16 @@ class FixedAsr:
             config_hash="pipeline-test",
             language="zh",
             raw_text=self._text,
-            segments=(AsrSegment(1200, 3200, self._text, confidence_raw=self._confidence),),
+            segments=(
+                AsrSegment(
+                    1200,
+                    3200,
+                    self._text,
+                    confidence_raw=self._confidence,
+                    local_speaker_label="0",
+                    speaker_confidence=0.88,
+                ),
+            ),
         )
 
 
@@ -128,6 +137,8 @@ def test_accepted_audio_reaches_lexical_and_vector_retrieval_with_timestamp(
     assert transcription.accepted_text == "今天去公园散步"
     assert observation.transcript_text == "今天去公园散步"
     assert segments[0].quality_status is SegmentQualityStatus.ACCEPTED
+    assert segments[0].local_speaker_label == "0"
+    assert segments[0].speaker_confidence == 0.88
     assert [asset_id for asset_id, _hits in lexical.search_fts("公园散步", scope_id="album1", limit=10)] == [
         "audio-ok"
     ]

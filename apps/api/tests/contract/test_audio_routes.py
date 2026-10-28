@@ -168,6 +168,8 @@ def test_audio_transcript_is_stored_and_searchable(client: TestClient):
     assert payload["accepted_text"] == "今天去公园散步。"
     assert payload["segments"][0]["searchable"] is True
     assert payload["segments"][0]["start_ms"] == 0
+    assert payload["segments"][0]["local_speaker_label"] == "0"
+    assert payload["segments"][0]["speaker_confidence"] == 0.91
 
     search = client.get("/api/v1/search", params={"q": "公园散步"})
     assert search.status_code == 200

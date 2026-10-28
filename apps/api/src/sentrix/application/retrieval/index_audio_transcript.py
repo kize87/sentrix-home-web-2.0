@@ -42,6 +42,8 @@ class IndexAudioTranscriptSegments:
                         "confidence": segment.confidence_calibrated
                         if segment.confidence_calibrated is not None
                         else segment.confidence_raw,
+                        "local_speaker_label": segment.local_speaker_label,
+                        "speaker_confidence": segment.speaker_confidence,
                     },
                 )
             )

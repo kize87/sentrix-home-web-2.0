@@ -168,7 +168,16 @@ class FakeAudioTranscriber:
             config_hash="fake-config",
             language="zh",
             raw_text="今天去公园散步。",
-            segments=(AsrSegment(0, 1800, "今天去公园散步。", confidence_raw=0.95),),
+            segments=(
+                AsrSegment(
+                    0,
+                    1800,
+                    "今天去公园散步。",
+                    confidence_raw=0.95,
+                    local_speaker_label="0",
+                    speaker_confidence=0.91,
+                ),
+            ),
         )
 
 

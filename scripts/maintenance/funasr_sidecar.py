@@ -29,22 +29,35 @@ class TranscribeRequest(BaseModel):
 
 
 class Service:
-    def __init__(self, *, model_name: str, vad_model: str, punc_model: str, device: str) -> None:
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        vad_model: str,
+        punc_model: str,
+        device: str,
+        spk_model: str = "",
+    ) -> None:
         from funasr import AutoModel  # type: ignore[import-not-found]
 
         self.model_name = model_name
         self.vad_model = vad_model
         self.punc_model = punc_model
+        self.spk_model = spk_model
         self.device = device
         self.model_version = _package_version("funasr")
-        signature = f"{model_name}:{vad_model}:{punc_model}:{device}:wav-16k-mono-v1"
-        self.config_hash = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:16]
-        self.model = AutoModel(
-            model=model_name,
-            vad_model=vad_model,
-            punc_model=punc_model,
-            device=device,
+        signature = (
+            f"{model_name}:{vad_model}:{punc_model}:{spk_model}:{device}:wav-16k-mono-v1"
         )
+        self.config_hash = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:16]
+        model_kwargs = {"model": model_name, "device": device}
+        if vad_model:
+            model_kwargs["vad_model"] = vad_model
+        if punc_model:
+            model_kwargs["punc_model"] = punc_model
+        if spk_model:
+            model_kwargs["spk_model"] = spk_model
+        self.model = AutoModel(**model_kwargs)
 
     def transcribe(self, source: Path) -> dict[str, object]:
         with tempfile.NamedTemporaryFile(prefix="sentrix-asr-", suffix=".wav", delete=False) as temporary:
@@ -81,6 +94,9 @@ def health() -> dict[str, object]:
         "model_name": SERVICE.model_name if SERVICE is not None else "",
         "model_version": SERVICE.model_version if SERVICE is not None else "",
         "config_hash": SERVICE.config_hash if SERVICE is not None else "",
+        "vad_model": SERVICE.vad_model if SERVICE is not None else "",
+        "punc_model": SERVICE.punc_model if SERVICE is not None else "",
+        "spk_model": SERVICE.spk_model if SERVICE is not None else "",
     }
 
 
@@ -135,6 +151,7 @@ def _segments(result: dict[str, Any], duration_ms: int) -> list[dict[str, object
             if not isinstance(item, dict):
                 continue
             text = _clean_text(str(item.get("text") or item.get("sentence") or ""))
+            speaker = item.get("spk")
             rows.append(
                 {
                     "start_ms": int(item.get("start") or 0),
@@ -144,6 +161,11 @@ def _segments(result: dict[str, Any], duration_ms: int) -> list[dict[str, object
                     "alignment_score": _first_float(item, "alignment_score"),
                     "speech_probability": _first_float(item, "speech_probability"),
                     "language_probability": _first_float(item, "language_probability"),
+                    # CAM++ 的标签只在当前媒体内有效；0 是合法标签，不能用 ``or`` 吞掉。
+                    "speaker_label": "" if speaker is None else str(speaker).strip(),
+                    "speaker_confidence": _first_float(
+                        item, "speaker_confidence", "spk_confidence", "spk_score"
+                    ),
                 }
             )
     if not rows:
@@ -191,6 +213,7 @@ def main() -> None:
     parser.add_argument("--model", default="paraformer-zh")
     parser.add_argument("--vad-model", default="fsmn-vad")
     parser.add_argument("--punc-model", default="ct-punc")
+    parser.add_argument("--spk-model", default="cam++")
     parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
 
@@ -201,6 +224,7 @@ def main() -> None:
             vad_model=args.vad_model,
             punc_model=args.punc_model,
             device=args.device,
+            spk_model=args.spk_model,
         )
         LOAD_ERROR = ""
     except Exception as error:  # noqa: BLE001 - 服务仍启动，/health 明确报告加载失败

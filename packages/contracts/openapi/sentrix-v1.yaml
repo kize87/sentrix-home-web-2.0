@@ -2492,6 +2492,15 @@ components:
         searchable:
           type: boolean
           title: Searchable
+        local_speaker_label:
+          type: string
+          title: Local Speaker Label
+          description: CAM++ 在当前媒体内生成的匿名说话人标签；不表示跨媒体稳定身份。
+        speaker_confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Speaker Confidence
       type: object
       required:
       - id
@@ -2504,6 +2513,8 @@ components:
       - quality_status
       - quality_reasons
       - searchable
+      - local_speaker_label
+      - speaker_confidence
       title: AudioTranscriptSegmentResponse
     AudioTranscriptionResponse:
       properties:

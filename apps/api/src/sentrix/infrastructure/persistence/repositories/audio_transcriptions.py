@@ -75,7 +75,8 @@ class SqliteAudioTranscriptionRepository:
                     "INSERT INTO audio_transcript_segments (id, transcription_id, asset_id, scope_id,"
                     " ordinal, start_ms, end_ms, raw_text, normalized_text, confidence_raw,"
                     " confidence_calibrated, alignment_score, quality_status, quality_reasons_json,"
-                    " searchable, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " searchable, local_speaker_label, speaker_confidence, created_at, updated_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         segment.id,
                         stored_id,
@@ -92,6 +93,8 @@ class SqliteAudioTranscriptionRepository:
                         segment.quality_status.value,
                         json.dumps(list(segment.quality_reasons), ensure_ascii=False),
                         int(segment.searchable),
+                        segment.local_speaker_label,
+                        segment.speaker_confidence,
                         timestamp,
                         timestamp,
                     ),
@@ -128,6 +131,7 @@ class SqliteAudioTranscriptionRepository:
                 "SELECT id, transcription_id, asset_id, scope_id, ordinal, start_ms, end_ms,"
                 " raw_text, normalized_text, confidence_raw, confidence_calibrated, alignment_score,"
                 " quality_status, quality_reasons_json, searchable"
+                ", local_speaker_label, speaker_confidence"
                 " FROM audio_transcript_segments WHERE transcription_id = ? ORDER BY ordinal",
                 (transcription_id,),
             ).fetchall()
@@ -155,4 +159,6 @@ class SqliteAudioTranscriptionRepository:
             quality_status=SegmentQualityStatus(row["quality_status"]),
             quality_reasons=tuple(str(item) for item in reasons),
             searchable=bool(row["searchable"]),
+            local_speaker_label=row["local_speaker_label"] or "",
+            speaker_confidence=row["speaker_confidence"],
         )
