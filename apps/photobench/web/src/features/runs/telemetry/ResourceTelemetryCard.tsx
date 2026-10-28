@@ -146,6 +146,16 @@ const POWER_LABELS: Record<string, string> = {
   gpu_device: "NVIDIA 显卡功率", module_estimate: "AGX 模块功率估计", module_input: "NX 模块输入功率",
   macmon_sys_power: "Mac 系统功率估计", system: "Mac 系统功率估计", system_estimate: "Mac 系统功率估计",
 };
+const STATUS_FIELDS = [
+  ["CPU 利用率", "cpu_utilization_pct", "%"],
+  ["GPU 利用率", "gpu_utilization_pct", "%"],
+  ["CPU 温度", "cpu_temperature_c", "°C"],
+  ["GPU 温度", "temperature_c", "°C"],
+] as const;
+function formatResource(value: unknown, unit: string): string {
+  const number = telemetryNumber(value);
+  return number === null ? "未采集" : `${number.toFixed(1)} ${unit}`;
+}
 export function ResourceTelemetryCard({ run }: { run: Run | null | undefined }) {
   const live = telemetryLiveState(run);
   const stats = gpuMetricsView(run);
@@ -157,6 +167,8 @@ export function ResourceTelemetryCard({ run }: { run: Run | null | undefined }) 
   const fields = isMac
     ? [...RESOURCE_MEMORY_FIELDS.slice(0, 3), ["整机显存（参考）", "device_gpu_memory_mib"] as const]
     : RESOURCE_MEMORY_FIELDS;
+  const statusFields: ReadonlyArray<readonly [string, string, string]> = [...STATUS_FIELDS,
+    [POWER_LABELS[latest.power_scope || stats.power_scope] ?? "功率（范围未记录）", "power_draw_w", "W"]];
   const graph = useMemo(() => isMac
     ? { ...GRAPHS[0]!, lines: [...GRAPHS[0]!.lines.slice(0, 3),
       { ...GRAPHS[0]!.lines[5]!, label: "整机显存（参考）" }] }
@@ -176,6 +188,13 @@ export function ResourceTelemetryCard({ run }: { run: Run | null | undefined }) 
         <strong>{telemetryNumber(latest[key]) === null ? "未采集" : fmtMemory(latest[key])}</strong>
         <small>采样峰值 {telemetryNumber(stats[key]?.peak) === null ? "未记录" : fmtMemory(stats[key].peak)}</small>
       </div>)}
+    </div>
+    <div className="phase-metrics resource-status-metrics" aria-label="利用率、温度与功率指标">
+      {statusFields.map(([label, key, unit]) =>
+        <div className="phase-metric" key={key}><span>{label}</span>
+          <strong>{formatResource(latest[key], unit)}</strong>
+          <small>采样峰值 {telemetryNumber(stats[key]?.peak) === null ? "未记录" : formatResource(stats[key].peak, unit)}</small>
+        </div>)}
     </div>
     <ResourceGraph {...{ graph, history, snapshots, sampledDown, revision }} />
     <small className="muted">{snapshots ? "阶段快照，横轴为序号。" : run?.history_mode === "full"

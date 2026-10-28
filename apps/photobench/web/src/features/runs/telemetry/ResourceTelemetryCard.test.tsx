@@ -25,6 +25,30 @@ function run(): Run {
     peak: { system_memory_used_mib: 2048 } } } as Run;
 }
 describe("resource telemetry v1", () => {
+  it("shows resource summaries before expanding charts and keeps missing current values separate from peaks", () => {
+    const value = run();
+    Object.assign(value.telemetry_live!.latest!, { cpu_utilization_pct: 0, gpu_utilization_pct: 73.25, cpu_temperature_c: 55.5, temperature_c: null });
+    value.telemetry_live!.field_stats = { temperature_c: { peak: 61.2 }, power_draw_w: { peak: 22 } };
+    const view = render(<TelemetryCard run={value} />);
+    const cards = view.getByLabelText("利用率、温度与功率指标");
+    expect(cards.children.length).toBe(5);
+    const text = Array.from(cards.children).map(card => card.textContent);
+    expect(text[0]).toContain("CPU 利用率0.0 %");
+    expect(text[1]).toContain("GPU 利用率73.3 %");
+    expect(text[2]).toContain("CPU 温度55.5 °C");
+    expect(text[3]).toContain("GPU 温度未采集采样峰值 61.2 °C");
+    expect(text[4]).toContain("Mac 系统功率估计10.0 W采样峰值 22.0 W");
+    expect(charts.init).toHaveBeenCalledTimes(1);
+  });
+  it("labels unknown power scope explicitly and leaves absent readings uncollected", () => {
+    const value = run();
+    delete value.telemetry_live!.latest!.power_scope;
+    delete value.telemetry_live!.latest!.power_draw_w;
+    const view = render(<TelemetryCard run={value} />);
+    const cards = view.getByLabelText("利用率、温度与功率指标");
+    expect(cards.children[1]!.textContent).toContain("GPU 利用率未采集采样峰值 未记录");
+    expect(cards.children[4]!.textContent).toContain("功率（范围未记录）未采集采样峰值 10.0 W");
+  });
   it("draws one combined graph and preserves nulls and real gaps", () => {
     const view = render(<TelemetryCard run={run()} />);
     expect(charts.init).toHaveBeenCalledTimes(1);

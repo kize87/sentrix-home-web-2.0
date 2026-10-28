@@ -1048,3 +1048,5 @@ details.qa-results-body[open] > summary::before { content:"▾ "; }
 .model-tool-node[open] > summary::before { content:"▾"; }
 .model-tool-node > summary span { color:var(--muted); }
 .model-tool-node-body { padding:6px 8px 8px; border-top:1px solid #eef1f6; }
+
+.gpu-result-card .resource-status-metrics { grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); margin:7px 0 10px; }
