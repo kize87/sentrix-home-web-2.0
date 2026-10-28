@@ -204,12 +204,15 @@ class GpuSampler:
                     sample[key] = data[key]
             for key in (
                 "protocol_version",
-                "resource_missing_reasons",
                 "product_stack_gpu_memory_mib",
                 "device_gpu_memory_mib",
             ):
                 if key in process_memory:
                     sample[key] = process_memory[key]
+            sample["resource_missing_reasons"] = {
+                **(sample.get("resource_missing_reasons") or {}),
+                **(process_memory.get("resource_missing_reasons") or {}),
+            }
             for key in ("cpu_utilization_pct", "cpu_observed_at_monotonic"):
                 sample[key] = system_memory.get(key)
             per_gpu = process_memory.get("gpu_process_memory_by_index")

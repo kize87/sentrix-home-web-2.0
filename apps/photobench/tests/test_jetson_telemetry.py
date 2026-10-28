@@ -705,3 +705,64 @@ def test_previous_topology_finishing_during_memory_launches_current_successor(mo
         assert data["memory_observations"]["process:42:pss"]["observed_at_monotonic"] < snapshot["started"]
     finally:
         release.set()
+
+
+def test_gpu_thermal_sensor_reads_only_gpu_and_preserves_idle_missing(monkeypatch, tmp_path):
+    import errno
+    import os
+
+    cpu = tmp_path / "thermal_zone0"
+    gpu = tmp_path / "thermal_zone7"
+    cpu.mkdir()
+    gpu.mkdir()
+    (cpu / "type").write_text("cpu-thermal\n")
+    (cpu / "temp").write_text("65000\n")
+    (gpu / "type").write_text("gpu-thermal\n")
+    (gpu / "temp").write_text("49562\n")
+    value = jetson._gpu_temperature(tmp_path)
+    assert value["temperature_c"] == 49.562
+    assert value["gpu_temperature_sensor"] == str(gpu / "temp")
+    assert value["gpu_temperature_method"] == "jetson_gpu_thermal_sysfs"
+    (gpu / "temp").write_text("-256000\n")
+    assert (
+        jetson._gpu_temperature(tmp_path)["resource_missing_reasons"]["temperature_c"]
+        == "gpu_temperature_invalid_reading"
+    )
+
+    def idle(fd, size):
+        raise BlockingIOError(errno.EAGAIN, os.strerror(errno.EAGAIN))
+
+    monkeypatch.setattr(jetson.os, "read", idle)
+    missing = jetson._gpu_temperature(tmp_path)
+    assert missing["temperature_c"] is None
+    assert (
+        missing["resource_missing_reasons"]["temperature_c"]
+        == "gpu_temperature_sensor_temporarily_unavailable"
+    )
+
+
+def test_gpu_temperature_uses_its_own_observation_age_and_source():
+    from photobench.domain.runtime.metrics import device_freshness, resource_records
+
+    sample = {
+        "protocol_version": "photobench-resource-telemetry-v1",
+        "source": "jetson_local_pss",
+        "_t": 100.0,
+        "temperature_c": 49.562,
+        "cpu_temperature_c": 65,
+        "device_observed_at_monotonic": 90.0,
+        "gpu_temperature_observed_at_monotonic": 99.9,
+        "gpu_temperature_method": "jetson_gpu_thermal_sysfs",
+    }
+    fresh, rejected = device_freshness(sample)
+    assert fresh["temperature_c"] == 49.562
+    assert fresh["cpu_temperature_c"] is None
+    assert "temperature_c" not in rejected
+    record = resource_records(fresh)["gpu_temperature"]
+    assert record["method"] == "jetson_gpu_thermal_sysfs"
+    assert record["observed_at_monotonic"] == 99.9
+    assert record["status"] == "available"
+    expired, rejected = device_freshness({**sample, "_t": 105.0, "device_observed_at_monotonic": 105.0})
+    assert expired["temperature_c"] is None
+    assert rejected == ["temperature_c"]
+    assert resource_records(expired)["gpu_temperature"]["reason"] == "gpu_temperature_observation_expired"

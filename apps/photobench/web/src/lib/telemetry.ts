@@ -780,9 +780,9 @@ export const RESOURCE_MEMORY_FIELDS = [
   ["主模型内存", "model_process_system_memory_used_mib"],
   ["产品内存", "product_stack_memory_mib"],
   ["整机内存", "system_memory_used_mib"],
-  ["主模型 GPU 内存", "model_process_gpu_memory_mib"],
-  ["产品 GPU 内存", "product_stack_gpu_memory_mib"],
-  ["整机／整卡 GPU 内存", "device_gpu_memory_mib"],
+  ["主模型显存", "model_process_gpu_memory_mib"],
+  ["产品显存", "product_stack_gpu_memory_mib"],
+  ["整机／整卡显存", "device_gpu_memory_mib"],
 ] as const;
 function resourceMemoryRows(raw: Dict, peak = false): MetricRow[] {
   return RESOURCE_MEMORY_FIELDS.map(([name, key]) => [

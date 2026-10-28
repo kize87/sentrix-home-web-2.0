@@ -21,6 +21,7 @@ S9a 施工记录把它裁决给 S9b；S9b 切三段时漏分，S9b-2 施工记�
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import re
 import shutil
@@ -967,6 +968,43 @@ def _parse_tegrastats_line(line: str) -> dict[str, Any]:
     return sample
 
 
+def _gpu_temperature(root: Path | None = None) -> dict[str, Any]:
+    """Read the GPU thermal zone; idle EAGAIN remains an explicit missing value."""
+    result: dict[str, Any] = {
+        "temperature_c": None,
+        "gpu_temperature_method": "jetson_gpu_thermal_sysfs",
+        "gpu_temperature_observed_at_monotonic": time.monotonic(),
+    }
+    reason = "gpu_temperature_sensor_missing"
+    for zone in sorted((root or Path("/sys/class/thermal")).glob("thermal_zone*")):
+        try:
+            if (zone / "type").read_text(encoding="ascii").strip().lower() != "gpu-thermal":
+                continue
+            result["gpu_temperature_sensor"] = str(zone / "temp")
+            # Buffered text reads can turn a sysfs EAGAIN into TypeError on
+            # Python 3.10. os.read preserves the kernel's actual errno.
+            fd = os.open(zone / "temp", os.O_RDONLY)
+            try:
+                celsius = float(os.read(fd, 128).decode("ascii").strip()) / 1000
+            finally:
+                os.close(fd)
+            if not 0 < celsius <= 150:
+                reason = "gpu_temperature_invalid_reading"
+                break
+            result["temperature_c"] = round(celsius, 3)
+            return result
+        except OSError as error:
+            reason = (
+                "gpu_temperature_sensor_temporarily_unavailable"
+                if error.errno == errno.EAGAIN
+                else "gpu_temperature_sensor_read_failed"
+            )
+        except (ValueError, UnicodeError):
+            reason = "gpu_temperature_invalid_reading"
+    result["resource_missing_reasons"] = {"temperature_c": reason}
+    return result
+
+
 class _TegrastatsStream:
     """一个长驻的 ``tegrastats`` 进程，0.5 秒的采样不再每次都 fork 一个子进程。"""
 
@@ -1190,6 +1228,7 @@ class LocalJetsonLlamaCppTelemetryProvider:
             sample["device_observed_at_monotonic"] = _TEGRASTATS._observed_at
             sample["device_observation_age_seconds"] = time.monotonic() - _TEGRASTATS._observed_at
             sample["device_observation_ttl_seconds"] = 3 * _TEGRASTATS.interval_ms / 1000
+        sample.update(_gpu_temperature())
         self._device_sample = sample
         return self._device_sample
 

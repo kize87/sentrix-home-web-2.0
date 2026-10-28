@@ -104,17 +104,31 @@ def device_freshness(sample: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     """Rebase source age at persistence/read time; retained timestamps are the facts."""
     result = dict(sample)
     captured = finite_number(sample.get("_t", sample.get("t")))
+    own_gpu_temperature = "gpu_temperature_observed_at_monotonic" in sample
+    gpu_observed = finite_number(sample.get("gpu_temperature_observed_at_monotonic"))
+    rejected = []
+    if own_gpu_temperature and (
+        captured is None or gpu_observed is None or not 0 <= captured - gpu_observed <= 3
+    ):
+        result["temperature_c"] = None
+        result["resource_missing_reasons"] = {
+            **(sample.get("resource_missing_reasons") or {}),
+            "temperature_c": "gpu_temperature_observation_expired",
+        }
+        rejected.append("temperature_c")
     observed = finite_number(sample.get("device_observed_at_monotonic"))
     if captured is None or observed is None:
-        return result, []
+        return result, rejected
     age = captured - observed
     # Old observations did not record source periods. This explicit compatibility
     # policy is versioned; it does not reconstruct an unknown refresh cadence.
     ttl = finite_number(sample.get("device_observation_ttl_seconds", 3.0))
     result.update(device_observation_age_seconds=age, device_freshness_version=1)
     if ttl is not None and ttl > 0 and 0 <= age <= ttl:
-        return result, []
-    rejected = [key for key in DEVICE_FIELDS if key in result]
+        return result, rejected
+    rejected += [
+        key for key in DEVICE_FIELDS if key in result and not (key == "temperature_c" and own_gpu_temperature)
+    ]
     for key in rejected:
         result[key] = None
     status = dict(result.get("source_status") or {})
@@ -268,6 +282,8 @@ def resource_records(sample: dict[str, Any]) -> dict[str, Any]:
             )
         elif name == "power":
             method = str(sample.get("power_scope") or "scope_unrecorded")
+        if name == "gpu_temperature" and sample.get("gpu_temperature_method"):
+            method = str(sample["gpu_temperature_method"])
         refs = dependencies.get(key) or []
         times = [finite_number((observations.get(ref) or {}).get("observed_at_monotonic")) for ref in refs]
         valid_times = [t for t in times if t is not None]
@@ -284,6 +300,8 @@ def resource_records(sample: dict[str, Any]) -> dict[str, Any]:
                 )
             )
         )
+        if name == "gpu_temperature" and sample.get("gpu_temperature_method"):
+            observed = finite_number(sample.get("gpu_temperature_observed_at_monotonic"))
         status = "available" if value is not None and value >= 0 else "unavailable"
         reason = None if status == "available" else reasons.get(key, "source_not_available")
         output[name] = {

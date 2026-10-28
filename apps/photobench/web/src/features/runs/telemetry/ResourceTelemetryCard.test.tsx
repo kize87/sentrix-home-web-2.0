@@ -32,11 +32,12 @@ describe("resource telemetry v1", () => {
     const memory = charts.instances[0].setOption.mock.calls[0][0];
     const gpu = charts.instances[0].setOption.mock.calls[0][0];
     expect(memory.series.slice(0, 3).map((s: any) => s.name)).toEqual(["主模型内存", "产品内存", "整机内存"]);
-    expect(gpu.series.slice(3).map((s: any) => s.name)).toEqual(["主模型 GPU 内存", "产品 GPU 内存", "整机／整卡 GPU 内存"]);
+    expect(gpu.series.slice(3).map((s: any) => s.name)).toEqual(["主模型显存", "产品显存", "整机／整卡显存"]);
     expect(memory.yAxis.name).toBe("GiB");
     expect(memory.series[0].lineStyle.type).toBe("solid");
     expect(memory.series[3].lineStyle.type).toBe("dashed");
-    expect(memory.series[0].lineStyle.color).toBe(memory.series[3].lineStyle.color);
+    expect(new Set(memory.series.map((s: any) => s.itemStyle.color)).size).toBe(6);
+    expect(memory.series.every((s: any) => s.itemStyle.color === s.lineStyle.color)).toBe(true);
     expect(memory.xAxis.type).toBe("value");
     expect(memory.series[0].markArea.data[0]).toEqual([expect.objectContaining({ name: "数据导入", xAxis: 0 }), { xAxis: 5 }]);
     expect(memory.series[0].data).toEqual([[0, .25], [1, null], [3, null], [5, .25]]);
@@ -50,13 +51,13 @@ describe("resource telemetry v1", () => {
     value.telemetry_live!.latest!.model_process_gpu_memory_mib = null;
     const view = render(<TelemetryCard run={value} />);
     const gpu = charts.instances[0].setOption.mock.calls[0][0];
-    expect(gpu.series.map((s: any) => s.name)).toEqual(["主模型内存", "产品内存", "整机内存", "整机 GPU 分配（参考）"]);
+    expect(gpu.series.map((s: any) => s.name)).toEqual(["主模型内存", "产品内存", "整机内存", "整机显存（参考）"]);
     expect(gpu.series[3].data[0]).toEqual([0, 2]);
     const cards = view.container.querySelector(".live-telemetry-metrics")!;
     expect(cards.children.length).toBe(4);
-    expect(cards.textContent).not.toContain("主模型 GPU 内存");
-    expect(cards.textContent).not.toContain("产品 GPU 内存");
-    expect(cards.textContent).toContain("整机 GPU 分配（参考）");
+    expect(cards.textContent).not.toContain("主模型显存");
+    expect(cards.textContent).not.toContain("产品显存");
+    expect(cards.textContent).toContain("整机显存（参考）");
   });
   it("keeps instances across identical polling and disposes it on unmount", () => {
     const view = render(<TelemetryCard run={run()} />);
