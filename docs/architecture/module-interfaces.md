@@ -1258,3 +1258,14 @@ Judge一致性v3进一步限定为明确“模型/助手的回答/答案/结论�
 ## PhotoBench 错误分析（2026-10-24）
 
 `AnalysisBackend`为独立派生任务端口，`ErrorAnalysis`编排，bootstrap装配。分析不改变测评状态/评分/GT，单spawn进程并发1、测评优先，纳入取消/退出确认与重启恢复。API、事件/案例/报告类型、分母与来源契约见[错误分析设计](photobench-error-analysis.md)。Agent的`ModelReply`和`ModelServiceError`追加可选diagnostics，调用投影追加唯一ID及恢复关联，不更改现有执行策略。
+
+### 2026-10-28 resident memory formula version
+
+TelemetryProvider signatures and JSON shapes remain unchanged. Existing optional
+`memory_accounting`, `memory_unit`, `system_memory_scope`, `memory_observations`
+and dependencies carry formula version and raw evidence. Apple resident v2
+uses independent, complete, identity-verified group summaries; local Jetson
+system v2 counts non-free physical RAM including caches. Domain owns formulas,
+infrastructure owns collection, application preserves observations and TTL.
+History retains original accounting; device/allocation estimates are not
+relabeled as physically deduplicated totals. See photobench-metrics-contract.md.

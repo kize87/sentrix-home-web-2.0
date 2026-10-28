@@ -1909,7 +1909,7 @@ def validated_telemetry_sample(sample: dict[str, Any]) -> tuple[dict[str, Any], 
     """Apply identical validity rules to fresh and historical observations; never mutate raw data."""
     result, rejected = device_freshness(sample)
     apple = (
-        sample.get("memory_accounting") == "apple_capacity_estimate"
+        sample.get("memory_accounting") in {"apple_capacity_estimate", "apple_footprint_resident_v2"}
         or sample.get("source") == "apple_unified"
     )
     for key, value in sample.items():
@@ -2202,6 +2202,7 @@ def aggregate_gpu_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "memory_complete",
         "power_scope",
         "power_rail",
+        "system_memory_scope",
     ):
         metrics[key] = (latest if key == "memory_accounting" else samples[-1]).get(key)
     limits = [
@@ -2261,6 +2262,20 @@ def aggregate_gpu_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
                 "note": (
                     "PSS is shared physical RAM, not dedicated GPU VRAM; "
                     "KV bytes unavailable without verified per-token allocation."
+                ),
+            },
+            **metrics,
+        }
+    if latest.get("memory_accounting") == "apple_footprint_resident_v2":
+        return {
+            "samples_count": len(samples),
+            "source": "apple_unified",
+            "memory_profile": {
+                "method": "apple_footprint_resident_v2",
+                "memory_unit": "apple_resident_mib",
+                "note": (
+                    "Group-deduplicated dirty - swapped + clean + reclaimable; "
+                    "compressor physical store is system-only."
                 ),
             },
             **metrics,

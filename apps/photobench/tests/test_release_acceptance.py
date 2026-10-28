@@ -101,6 +101,39 @@ def test_unknown_total_cannot_pass_as_zero():
     assert acceptance.expected_total([0, 10], 10)
 
 
+def test_resident_acceptance_recomputes_components_and_rejects_missing_swap():
+    acceptance = script("photobench_acceptance")
+    observation = {
+        "status": "available",
+        "observed_at_monotonic": 9,
+        "finished_at_monotonic": 9.5,
+        "ttl_seconds": 3,
+        "components_bytes": {
+            "dirty": 100 * 1048576,
+            "swapped": 60 * 1048576,
+            "clean": 20 * 1048576,
+            "reclaimable": 10 * 1048576,
+        },
+    }
+    sample = {
+        "_t": 10,
+        "memory_observation_version": 1,
+        "memory_observations": {"model": observation, "product": observation},
+        "memory_dependencies": {
+            "model_process_system_memory_used_mib": ["model"],
+            "product_stack_memory_mib": ["product"],
+        },
+        "model_process_system_memory_used_mib": 70,
+        "product_stack_memory_mib": 70,
+    }
+    assert acceptance.check_apple_resident_totals(sample)
+    sample["product_stack_memory_mib"] = 130
+    assert not acceptance.check_apple_resident_totals(sample)
+    sample["product_stack_memory_mib"] = 70
+    del observation["components_bytes"]["swapped"]
+    assert not acceptance.check_apple_resident_totals(sample)
+
+
 def test_acceptance_derives_age_independently_instead_of_trusting_reported_age():
     acceptance = script("photobench_acceptance")
     sample = {

@@ -48,7 +48,7 @@ export function telemetryNumber(value: unknown): number | null {
 export function telemetryPlatform(raw: unknown): string {
   const value = dict(raw);
   const accounting = value.memory_accounting || dict(value.latest).memory_accounting;
-  if (accounting === "apple_capacity_estimate") return "apple_unified";
+  if (["apple_capacity_estimate", "apple_footprint_resident_v2"].includes(accounting)) return "apple_unified";
   if (accounting === "jetson_pss_plus_nvmap_estimate") return "jetson_local_pss";
   if (accounting === "nvidia_pss_and_vram") return "nvidia";
   return value.source || ""; // Compatibility for historical records without a metric definition.
@@ -93,6 +93,16 @@ export function gpuMetricRows(rawPhase: unknown = {}): MetricRow[] {
   const clock = dict(phase.sm_clock_mhz);
   const processLimit = phase.model_process_memory_limit_mib;
   const processLimitLabel = processLimit == null ? "模型进程显存上限" : `${fmtMemory(processLimit)} 上限告警`;
+  if (phase.memory_accounting === "apple_footprint_resident_v2") return [
+    ["整机已占内存（含缓存）", fmtMemory(dict(phase.system_memory_used_mib).peak), "总物理内存 − 空闲物理页；含压缩器实际物理页，已换出页不计"],
+    ["整套产品驻留内存（估计）", fmtMemory(dict(phase.product_stack_memory_mib).peak), "整组产品 PID 去重汇总：Dirty − Swapped + Clean + Reclaimable"],
+    ["主模型驻留内存（估计）", fmtMemory(dict(phase.model_process_system_memory_used_mib).peak), "主模型及工作进程整组去重；不加映射文件大小或设备 GPU 总量", true],
+    ["GPU 利用率", fmtNumber(util.mean, "%"), `峰值 ${fmtNumber(util.peak, "%")}`],
+    ["GPU 温度", fmtNumber(temp.mean, "°C"), `峰值 ${fmtNumber(temp.peak, "°C")}`],
+    ["CPU 温度", fmtNumber(dict(phase.cpu_temperature_c).mean, "°C"), "macmon"],
+    ["系统功耗", fmtNumber(power.mean, "W"), `峰值 ${fmtNumber(power.peak, "W")} · ${phase.power_scope || "范围未记录"}`],
+    ["采样数量", `${phase.samples_count ?? 0} 次`, "压缩器物理存储仅在整机计入；进程共享与驱动归属为工具估计"],
+  ];
   if (telemetryPlatform(phase) === "apple_unified") return [
     ["主模型占用（footprint+权重）", fmtMemory(dict(phase.model_process_system_memory_used_mib).peak), `均值 ${fmtMemory(dict(phase.model_process_system_memory_used_mib).mean)} · 容量估计（footprint+映射权重），映射不保证驻留，非 GPU 专属显存`, true],
     ["主模型 footprint", fmtMemory(dict(phase.model_process_footprint_mib).peak), "phys_footprint 账本，含压缩等分量"],
@@ -191,6 +201,7 @@ export function gpuMetricsView(run: unknown): Dict {
     ];
     const out: Dict = { memory_accounting: live.latest?.memory_accounting, memory_complete: live.latest?.memory_complete,
       power_scope: live.latest?.power_scope, power_rail: live.latest?.power_rail,
+      system_memory_scope: live.latest?.system_memory_scope,
       sampling: live.sampling, memory_observation_version: live.latest?.memory_observation_version,
       memory_observations: live.latest?.memory_observations, memory_dependencies: live.latest?.memory_dependencies,
       sampling_diagnostics: live.latest?.sampling_diagnostics, ...phaseObj };
@@ -301,6 +312,15 @@ export function liveTelemetryRows(run: unknown): MetricRow[] {
     : scope === "all_related_pss_plus_model_uma_extra"
     ? "所有相关进程 PSS 加总 + 主模型/辅助模型 GPU/UMA 页"
     : "历史记录未标记新公式 scope；该值不能按当前公式解释，需重跑";
+  if (latest.memory_accounting === "apple_footprint_resident_v2") return [
+    ["整机已占内存（含缓存）", fmtGiB(latest.system_memory_used_mib), `峰值 ${fmtGiB(effectivePeak.system_memory_used_mib)} · 总物理内存 − 空闲物理页`],
+    ["整套产品驻留内存（估计）", fmtGiB(latest.product_stack_memory_mib), `峰值 ${fmtGiB(effectivePeak.product_stack_memory_mib)} · 整组 PID 去重：Dirty − Swapped + Clean + Reclaimable`],
+    ["主模型驻留内存（估计）", fmtGiB(latest.model_process_system_memory_used_mib), `峰值 ${fmtGiB(effectivePeak.model_process_system_memory_used_mib)} · 含工具归属的图形内存；不叠加文件映射大小`],
+    ["GPU 利用率", fmtLive(latest.gpu_utilization_pct, "%"), `峰值 ${fmtLive(effectivePeak.gpu_utilization_pct, "%")}`],
+    ["GPU 温度", fmtLive(latest.temperature_c, " °C"), "macmon"],
+    ["CPU 温度", fmtLive(latest.cpu_temperature_c, " °C"), "macmon"],
+    ["系统功耗", fmtLive(latest.power_draw_w, " W"), `峰值 ${fmtLive(effectivePeak.power_draw_w, " W")}`],
+  ];
   if (platform === "apple_unified") {
     const stage = ["completed", "completed_with_errors", "failed", "cancelled", "interrupted"].includes(r.status)
       ? statusLabel(r.status)
@@ -334,7 +354,7 @@ export function liveTelemetryRows(run: unknown): MetricRow[] {
       ["整套产品内存", fmtGiB(latest.product_stack_memory_mib), `采样峰值 ${fmtGiB(effectivePeak.product_stack_memory_mib)} · 相关 PID 的 PSS + 主/辅助模型 nvmap，PID 去重；归属/分配估计`],
       ["Sentrix 周边 PSS", fmtGiB(latest.sentrix_stack_pss_mib), "不含主模型，包含本地辅助模型进程 PSS"],
       ["辅助模型 GPU/UMA 分量", fmtGiB(latest.sentrix_auxiliary_model_uma_mib), "确认无本地辅助服务时为 0；未知保持不可用"],
-      ["整机 RAM", fmtGiB(latest.system_memory_used_mib), "MemTotal − MemAvailable；包括本机其他进程"],
+      ["整机 RAM", fmtGiB(latest.system_memory_used_mib), latest.system_memory_scope === "linux_physical_nonfree_including_cache_v2" ? "MemTotal − MemFree；含驻留缓存与内核，已换出页不计" : "旧版 MemTotal − MemAvailable；包括本机其他进程"],
       ["GPU 利用率", fmtLive(latest.gpu_utilization_pct, "%"), `采样峰值 ${fmtLive(effectivePeak.gpu_utilization_pct, "%")} · tegrastats GR3D`],
       ["GPU 温度", fmtLive(latest.temperature_c, " °C"), "tegrastats gpu@"],
       ["CPU 温度", fmtLive(latest.cpu_temperature_c, " °C"), "tegrastats cpu@"],
@@ -466,7 +486,8 @@ export function liveTelemetryPhaseRows(run: unknown): MetricRow[] {
   const isOrin = isApple || ["orin_ssh_pss", "jetson_local_pss"].includes(source);
   const modelKey = isOrin ? "model_process_system_memory_used_mib" : "model_process_memory_used_mib";
   const modelLabel = isApple
-    ? "主模型占用（footprint+权重）"
+    ? (dict(live.latest).memory_accounting || dict(dict(r.phases).gpu_metrics).memory_accounting) === "apple_footprint_resident_v2"
+      ? "主模型驻留内存（估计）" : "主模型占用（footprint+权重）"
     : isOrin
       ? jetsonUnifiedFromRun(run)
         ? "主模型占用（smaps Rss + GPU/UMA 页）"
@@ -536,6 +557,12 @@ export function memoryProfileRows(rawProfile: unknown = {}): MetricRow[] {
   const profile = dict(rawProfile);
   const memory = dict(profile.memory_profile);
   const isBenchmarkGpuProfile = profile.source === "gpu_metrics";
+  if (memory.method === "apple_footprint_resident_v2") return [
+    ["主模型驻留内存峰值（估计）", fmtMemory(dict(profile.model_process_system_memory_used_mib).peak), "整组进程 footprint 汇总；Dirty − Swapped + Clean + Reclaimable", true],
+    ["整套产品驻留内存峰值（估计）", fmtMemory(dict(profile.product_stack_memory_mib).peak), "整组产品PID去重；与主模型独立采集，不逐进程相加"],
+    ["整机已占内存峰值（含缓存）", fmtMemory(dict(profile.system_memory_used_mib).peak), "总物理内存减空闲页；压缩器实际物理存储只在整机计入"],
+    ["采集边界", "驻留归属估计", "共享与驱动分配按系统工具归属；不加模型文件映射长度或设备GPU总量"],
+  ];
   if (memory.method === "macos_unified_memory_v1") {
     return [
       ["内存占用峰值", memory.memory_used_peak_gib == null ? "-" : `${Number(memory.memory_used_peak_gib).toFixed(2)} GiB`, "16GB 统一内存整机峰值", true],
@@ -651,7 +678,9 @@ export function keyMetricRows(run: unknown, summary: unknown): KeyMetric[] {
     ? dict(gpu.model_process_system_memory_used_mib).peak
     : dict(gpu.model_process_memory_used_mib).peak;
   const processMemoryNote = isUnified
-    ? "主模型占用采样峰值（footprint+权重映射）· 容量估计，映射不保证驻留，非 GPU 专属显存"
+    ? gpu.memory_accounting === "apple_footprint_resident_v2"
+      ? "主模型驻留内存采样峰值（估计） · 整组PID去重：Dirty − Swapped + Clean + Reclaimable"
+      : "主模型占用采样峰值（footprint+权重映射）· 容量估计，映射不保证驻留，非 GPU 专属显存"
     : isOrin
       ? jetsonUnifiedFromRun(run)
         ? gpu.memory_accounting === "jetson_pss_plus_nvmap_estimate"

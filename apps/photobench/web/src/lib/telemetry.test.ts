@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
 
+describe("resident accounting v2", () => {
+  it("shows only three memory totals and keeps legacy capacity labels", () => {
+    const latest = { memory_accounting: "apple_footprint_resident_v2", system_memory_used_mib: 15000,
+      product_stack_memory_mib: 9000, model_process_system_memory_used_mib: 7000 };
+    const rows = liveTelemetryRows({ telemetry_live: { source: "apple_unified", latest } });
+    expect(rows.filter(row => /内存/.test(row[0]))).toHaveLength(3);
+    expect(rows.some(row => /footprint\+权重/.test(row[0]))).toBe(false);
+    const phase = gpuMetricRows({ ...latest, system_memory_used_mib: { peak: 15000 } });
+    expect(phase[0][0]).toBe("整机已占内存（含缓存）");
+    const old = liveTelemetryRows({ telemetry_live: { source: "apple_unified",
+      latest: { memory_accounting: "apple_capacity_estimate" } } });
+    expect(old.some(row => /footprint\+权重/.test(row[0]))).toBe(true);
+  });
+  it("labels Orin system formula by recorded scope", () => {
+    const run = { telemetry_live: { source: "jetson_local_pss", latest: {
+      memory_accounting: "jetson_pss_plus_nvmap_estimate",
+      system_memory_scope: "linux_physical_nonfree_including_cache_v2" } } };
+    expect(liveTelemetryRows(run).find(row => row[0] === "整机 RAM")?.[2]).toContain("MemFree");
+  });
+});
+
 import {
   aggregateMetricRows,
   comparableMemoryProfile,

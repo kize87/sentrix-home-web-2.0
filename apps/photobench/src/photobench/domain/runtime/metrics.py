@@ -69,11 +69,31 @@ def component_total(values: Sequence[float | None]) -> float | None:
 
 
 def system_used(total: object, available: object) -> float | None:
-    """Linux physical memory use; MemFree is not a substitute for MemAvailable."""
+    """Legacy working-use metric: capacity minus estimated available memory."""
     capacity, free = finite_number(total), finite_number(available)
     if capacity is None or free is None or not 0 <= free <= capacity:
         return None
     return round(capacity - free, 2)
+
+
+def physical_memory_used(total: object, free: object) -> float | None:
+    """Current non-free physical RAM, including resident reclaimable caches."""
+    capacity, idle = finite_number(total), finite_number(free)
+    if capacity is None or idle is None or capacity <= 0 or not 0 <= idle <= capacity:
+        return None
+    return round(capacity - idle, 2)
+
+
+def apple_resident_bytes(components: dict[str, Any]) -> int | None:
+    """footprint group totals, normalized to bytes; wired is a dirty subset."""
+    values = {key: finite_number(components.get(key)) for key in ("dirty", "swapped", "clean", "reclaimable")}
+    if any(value is None or value < 0 for value in values.values()):
+        return None
+    dirty, swapped, clean, reclaimable = (values[key] for key in ("dirty", "swapped", "clean", "reclaimable"))
+    assert dirty is not None and swapped is not None and clean is not None and reclaimable is not None
+    if swapped > dirty:
+        return None
+    return int(dirty - swapped + clean + reclaimable)
 
 
 def device_freshness(sample: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:

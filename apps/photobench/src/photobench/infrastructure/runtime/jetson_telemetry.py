@@ -38,7 +38,7 @@ from photobench.domain.runtime.metrics import (
     MEMORY_OBSERVATION_TTL_SECONDS,
     component_total,
     memory_freshness,
-    system_used,
+    physical_memory_used,
 )
 from photobench.infrastructure.runtime.bounded_probe import BoundedProbe
 from photobench.infrastructure.runtime.jetson_probe import JetsonMemoryWorker
@@ -986,14 +986,15 @@ def _meminfo_mib() -> dict[str, Any]:
         return {}
     total = values.get("MemTotal")
     available = values.get("MemAvailable")
-    used = system_used(total, available)
-    if used is None or total is None or available is None:
+    used = physical_memory_used(total, values.get("MemFree"))
+    if used is None or total is None:
         return {}
     return {
         "system_memory_used_mib": used,
         "system_memory_total_mib": round(total, 3),
-        "system_memory_available_mib": round(max(0.0, available), 3),
-        "system_memory_scope": "host_all_processes",
+        "system_memory_available_mib": round(available, 3) if available is not None else None,
+        "system_memory_free_mib": values.get("MemFree"),
+        "system_memory_scope": "linux_physical_nonfree_including_cache_v2",
     }
 
 
@@ -1013,7 +1014,7 @@ def _parse_tegrastats_line(line: str) -> dict[str, Any]:
             sample["system_memory_available_mib"] = round(
                 max(0.0, sample["system_memory_total_mib"] - sample[key]), 3
             )
-            sample["system_memory_scope"] = "host_all_processes"
+            sample["system_memory_scope"] = "tegrastats_ram_legacy"
     rails = {
         name: round(float(current) / 1000, 3)
         for name, current in re.findall(r"(VDD_[A-Z0-9_]+)\s+(\d+)mW", line)
@@ -1365,10 +1366,17 @@ class LocalJetsonLlamaCppTelemetryProvider:
             "system_memory_available_mib",
             "system_memory_scope",
         }
+        free = data.get("system_memory_free_mib")
         data = {key: value for key, value in data.items() if key in keys}
         if "system_memory_used_mib" not in data:
             return {"status": "unavailable", "source": "proc_meminfo", "reason": "ram_sample_unavailable"}
-        data["system_observation"] = _observation("proc_meminfo", started, available=True)
+        data["system_observation"] = _observation(
+            "proc_meminfo",
+            started,
+            available=True,
+            total_mib=data.get("system_memory_total_mib"),
+            free_mib=free,
+        )
         return {"status": "available", "source": "proc_meminfo", "data": data}
 
     def kv_cache(self) -> dict[str, Any]:

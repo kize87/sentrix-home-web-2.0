@@ -243,4 +243,18 @@ describe("TelemetryCard · echarts 生命周期（1.0 :1027-1125 / :2824-2837）
       "主模型进程占用（footprint+权重映射）",
     ]);
   });
+
+  it("Mac resident v2 draws three totals and ignores legacy/diagnostic fields", () => {
+    render(<TelemetryCard run={run({ telemetry_live: {
+      source: "apple_unified", samples_count: 2,
+      latest: { memory_accounting: "apple_footprint_resident_v2" },
+      history: [{ t: 1, system_memory_used_mib: 10000, product_stack_memory_mib: 5000,
+        model_process_system_memory_used_mib: 3000, sentrix_stack_pss_mib: 2000,
+        gpu_in_use_unified_memory_mib: 4000 }, { t: 2, system_memory_used_mib: 10000, product_stack_memory_mib: 5000, model_process_system_memory_used_mib: 3000 }],
+    } })} />);
+    const option = echartsMock.instance.setOption.mock.calls[0]?.[0] as { series: Array<{ name: string }> };
+    expect(option.series.map(series => series.name)).toEqual([
+      "整机已占内存（含缓存）", "整套产品驻留内存（估计）", "主模型驻留内存（估计）",
+    ]);
+  });
 });

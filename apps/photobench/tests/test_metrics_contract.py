@@ -515,12 +515,13 @@ def test_apple_scoped_model_workers_deduplicate_shared_roles(monkeypatch):
     monkeypatch.setattr(provider, "_device", lambda: {})
     monkeypatch.setattr(provider, "_ports", lambda: {1: {"8100"}, 2: {"8101"}, 3: {"8106"}})
     monkeypatch.setattr(apple, "_process_rows", lambda: [dict(r) for r in rows])
-    monkeypatch.setattr(apple, "_phys_footprint_bytes", lambda pid: 100 * 1048576)
-    monkeypatch.setattr(apple, "_weight_map_bytes", lambda pid: 10 * 1048576)
+    from test_apple_telemetry import resident_observation
+
+    monkeypatch.setattr(apple, "_process_identity", lambda pid: pid * 100)
+    monkeypatch.setattr(apple, "_resident_group", lambda group: resident_observation(group, 200))
     data = provider._augment()
-    assert data["model_process_footprint_mib"] == 200
-    assert data["product_stack_memory_mib"] == 220
-    assert data["sentrix_auxiliary_model_pss_mib"] == 0
+    assert data["product_stack_memory_mib"] == 200
+    assert data["memory_observations"]["model"]["pids"] == [1, 2]
     assert data["memory_complete"] is True
     provider.telemetry_services["embedding"]["profiles"]["split"]["ports"] = [8103]
     assert provider._augment()["memory_complete"] is False
@@ -612,7 +613,37 @@ def test_linux_memory_never_substitutes_memfree_for_memavailable(monkeypatch):
     assert system_used(100, None) is None
     assert system_used(100, 200) is None
     monkeypatch.setattr(jetson.Path, "read_text", lambda *a, **k: "MemTotal: 102400 kB\nMemFree: 1024 kB\n")
-    assert jetson._meminfo_mib() == {}
+    assert jetson._meminfo_mib()["system_memory_used_mib"] == 99.0
+
+
+def test_jetson_physical_formula_includes_cache_and_does_not_add_swap(monkeypatch):
+    monkeypatch.setattr(
+        jetson.Path,
+        "read_text",
+        lambda *a, **k: (
+            "MemTotal: 102400 kB\nMemFree: 10240 kB\nMemAvailable: 40960 kB\nSwapTotal: 999999 kB\n"
+        ),
+    )
+    value = jetson._meminfo_mib()
+    assert value["system_memory_used_mib"] == 90
+    assert value["system_memory_available_mib"] == 40
+    assert value["system_memory_scope"] == "linux_physical_nonfree_including_cache_v2"
+
+
+def test_apple_resident_aggregate_keeps_formula_and_raw_group_observations():
+    from photobench.domain.runs.analysis import aggregate_gpu_samples
+
+    sample = {
+        "source": "apple_unified",
+        "memory_accounting": "apple_footprint_resident_v2",
+        "memory_unit": "apple_resident_mib",
+        "model_process_system_memory_used_mib": 50,
+        "system_memory_scope": "apple_physical_nonfree_including_cache_v2",
+    }
+    result = aggregate_gpu_samples([sample])
+    assert result["memory_profile"]["method"] == "apple_footprint_resident_v2"
+    assert result["model_process_system_memory_used_mib"]["peak"] == 50
+    assert result["system_memory_scope"] == sample["system_memory_scope"]
 
 
 def test_jetson_pss_and_rss_share_one_kernel_observation(monkeypatch):

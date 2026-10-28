@@ -106,6 +106,33 @@ def expected_total(parts: list[Any], actual: Any, tolerance: float = 0.1) -> boo
     return actual is None if expected is None else finite(actual) and abs(actual - expected) <= tolerance
 
 
+def check_apple_resident_totals(sample: dict[str, Any]) -> bool:
+    """Independent recomputation from recorded byte components, not provider totals."""
+    observations = sample.get("memory_observations") or {}
+    for group, field in (
+        ("model", "model_process_system_memory_used_mib"),
+        ("product", "product_stack_memory_mib"),
+    ):
+        observation = observations.get(group) or {}
+        values = observation.get("components_bytes") or {}
+        parts = [values.get(key) for key in ("dirty", "swapped", "clean", "reclaimable")]
+        expected = None
+        if observation.get("status") == "available" and memory_dependencies_fresh(sample, field):
+            if not all(finite(value) and value >= 0 for value in parts):
+                return False
+            numbers = [float(value) for value in parts if finite(value)]
+            if numbers[1] > numbers[0]:
+                return False
+            expected = (numbers[0] - numbers[1] + numbers[2] + numbers[3]) / 1048576
+        actual = sample.get(field)
+        if expected is None:
+            if actual is not None:
+                return False
+        elif not finite(actual) or abs(expected - actual) > 0.005:
+            return False
+    return True
+
+
 def check_jetson_product_total(sample: dict[str, Any]) -> bool:
     if sample.get("memory_observation_version") == 1 and not memory_dependencies_fresh(
         sample, "product_stack_memory_mib"
@@ -936,6 +963,10 @@ def audit(runtime: Path) -> dict[str, Any]:
             if not check_jetson_product_total(sample):
                 metric_errors.append(f"{index}:jetson_product_total")
             formulas_checked += 1
+        elif accounting == "apple_footprint_resident_v2":
+            if not check_apple_resident_totals(sample):
+                metric_errors.append(f"{index}:apple_resident_totals")
+            formulas_checked += 1
         elif accounting == "apple_capacity_estimate":
             for total, left, right in (
                 (
@@ -961,6 +992,21 @@ def audit(runtime: Path) -> dict[str, Any]:
             if sample.get("source") in {"jetson_local_pss", "orin_ssh_pss"}:
                 metric_errors.append(f"{index}:nvidia_labeled_jetson")
             formulas_checked += 1
+        if sample.get("system_memory_scope") in {
+            "apple_physical_nonfree_including_cache_v2",
+            "linux_physical_nonfree_including_cache_v2",
+        }:
+            system = (sample.get("memory_observations") or {}).get("system") or {}
+            physical_total, physical_free = system.get("total_mib"), system.get("free_mib")
+            physical_used = sample.get("system_memory_used_mib")
+            if memory_dependencies_fresh(sample, "system_memory_used_mib") and (
+                not finite(physical_total)
+                or not finite(physical_free)
+                or not finite(physical_used)
+                or not 0 <= physical_free <= physical_total
+                or abs(physical_used - (physical_total - physical_free)) > 0.05
+            ):
+                metric_errors.append(f"{index}:physical_system_total")
         if sample.get("power_rail") and finite(sample.get("power_draw_w")):
             rails.add(str(sample["power_rail"]))
         if sample.get("device_observation_age_seconds", 0) > 3 and finite(sample.get("power_draw_w")):

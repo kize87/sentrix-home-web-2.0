@@ -53,12 +53,40 @@
 
 ## Accounting and historical compatibility
 
-Jetson: system=MemTotal-MemAvailable; model=smaps RSS+nvmap; product=related PSS+
-main/auxiliary nvmap. These are attribution/allocation estimates, not a proof of
-physical-page deduplication. Positive VmRSS residual is a labeled fallback only.
-NVIDIA host RAM and device VRAM remain distinct. Apple footprint and mapped
-weights are separately retained and their sum is a capacity estimate; system
-active+wired+compressor is platform-specific.
+Current local Jetson system RAM (`linux_physical_nonfree_including_cache_v2`)
+is MemTotal - MemFree, including resident reclaimable caches and physical zram
+storage. MemAvailable remains an independent available-capacity estimate; it is
+not the complement of this used value. Historical `host_all_processes` system
+values and NVIDIA retain MemTotal - MemAvailable.
+Jetson model=smaps RSS+nvmap; product=related PSS+main/auxiliary nvmap. These are
+attribution/allocation estimates. CPU-mapped device allocations and shared GPU
+buffers require driver-specific overlap validation; no disjointness or exact
+physical-page deduplication is claimed. Positive VmRSS residual is a labeled
+fallback only. NVIDIA host RAM and device VRAM remain distinct.
+
+Current Apple `memory_accounting=apple_footprint_resident_v2` uses physical
+non-free system RAM: hw.memsize - free_count * page_size (scope
+`apple_physical_nonfree_including_cache_v2`). Resident caches and the compressor's
+actual physical storage are included; disk swap is not added. Model and product
+are independently observed PID groups, each using footprint's deduplicated
+summary.total: Dirty - Swapped + Clean + Reclaimable, normalized to bytes from
+unit/bytes-per-unit. Swapped includes compressed and disk-swapped logical pages;
+wired is a dirty subset and is not added again. This is a tool-attributed
+resident estimate. Compressor physical bytes remain system-only because exact
+per-process physical attribution is unavailable. Shared kernel/user wired
+objects and driver attribution remain tool limitations. Model/product values
+are not obtained by adding per-PID footprints or mapping lengths. Device GPU
+counters remain raw diagnostics and are not summed into these three curves.
+
+Both Apple groups check complete PID membership and creation identity before
+and after collection, preserve original times/components in existing optional
+memory_observations, and obey the existing 3-second TTL. Timeout, permission,
+partial JSON and group changes produce null. No cropping to system RAM occurs.
+The envelope remains contract version 2; distinct accounting, unit and scope
+identifiers version the formulas. API shapes and the four provider methods stay
+unchanged. Read/API/summary/export use recorded versions. Legacy Apple
+`apple_capacity_estimate` keeps footprint + mapped weight length as a capacity
+estimate, and active+wired+compressor as its platform-specific system metric.
 
 Historical files are not rewritten. Deterministic read projections may be
 recomputed from recorded facts, using the declared contract version. Missing
