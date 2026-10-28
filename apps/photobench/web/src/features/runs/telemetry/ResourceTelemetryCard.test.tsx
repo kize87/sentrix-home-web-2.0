@@ -98,7 +98,7 @@ describe("resource telemetry v1", () => {
     fireEvent.click(view.getByRole("checkbox", { name: "曲线按阶段着色" }));
     const colored = instance.setOption.mock.calls[1][0];
     expect(colored.visualMap[0].pieces).toEqual([
-      { gte: 0, lt: 5, color: "#0284c7" }, { gte: 5, lte: 5, color: "#059669" },
+      { gte: 0, lt: 5, color: "#2563eb" }, { gte: 5, lte: 5, color: "#15803d" },
     ]);
     expect(colored.visualMap[0].seriesIndex).toEqual([0, 1, 2, 3, 4, 5]);
     expect(colored.series[0].lineStyle.color).toBeUndefined();

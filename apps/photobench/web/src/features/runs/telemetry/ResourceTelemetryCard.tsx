@@ -13,8 +13,15 @@ type Line = { key: string; label: string; color?: string; gpu?: boolean };
 type Graph = { title: string; unit: string; divisor: number; lines: Line[] };
 const SCOPE_COLORS = ["#5470c6", "#c66b24", "#27866a"];
 const PHASE_COLORS: Record<string, string> = {
-  model_deploy: "#64748b", album_create: "#0891b2", identity_seed: "#6366f1",
-  photo_import: "#0284c7", pipeline_processing: "#d97706", qa_eval: "#059669", gpu_metrics: "#9333ea",
+  model_deploy: "#64748b",
+  scope_setup: "#795548", scope_attach: "#795548",
+  identity_seed: "#7c3aed",
+  photo_import: "#2563eb",
+  pipeline_processing: "#ea580c",
+  qa_eval: "#15803d",
+  gpu_metrics: "#db2777",
+  aggregate: "#a16207",
+  unassigned: "#64748b",
 };
 const GRAPHS: Graph[] = [
   { title: "内存与显存占用", unit: "GiB", divisor: 1024,
