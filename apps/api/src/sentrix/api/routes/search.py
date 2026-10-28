@@ -164,6 +164,8 @@ def search_assets(
                 score=hit.score,
                 channels=dict(hit.channels),
                 raw_scores=dict(hit.raw_scores),
+                audio_start_ms=hit.audio_start_ms,
+                audio_end_ms=hit.audio_end_ms,
             )
         )
 

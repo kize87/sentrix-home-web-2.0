@@ -123,6 +123,8 @@ class EvidenceHit:
     # 在转成 ``EvidenceHit`` 时把它丢了——于是「这条命中的是确定性锚点还是相似度」
     # 到不了检索预览，模型只能按名次猜哪张更可能是自己要找的。
     evidence_class: str = "semantic"
+    audio_start_ms: int | None = None
+    audio_end_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +292,7 @@ class RetrieveEvidence:
         # 通道挂了时盒子是空的 → 顶层回 ``none``/未降级，那正是 ``EvidenceResult`` 的
         # 默认值，也是实情。
         visual_box: list[VisualSearchResult] = []
+        text_box: list[TextSearchResult] = []
 
         def run_visual() -> tuple[Sequence[CandidateHit], str, bool, str]:
             result = self._visual.execute(
@@ -297,6 +300,13 @@ class RetrieveEvidence:
             )
             visual_box.append(result)
             return _visual_candidates_health(result)
+
+        def run_text() -> tuple[Sequence[CandidateHit], str, bool, str]:
+            result = self._text.execute(
+                TextSearchRequest(text=text, scope_id=request.scope_id, limit=recall_limit)
+            )
+            text_box.append(result)
+            return _text_candidates_health(result)
 
         # 这个 dict 的插入顺序必须与 1.0 的构建顺序一致：metadata 最先，锚点加成才会
         # 落在同时被 metadata 与语义通道命中的候选上。
@@ -340,13 +350,16 @@ class RetrieveEvidence:
             # **候选第一次出现时**的通道给，顺序换了拿到的加成就不一样。
             TEXT_CHANNEL: record(
                 TEXT_CHANNEL,
-                lambda: _text_candidates_health(
-                    self._text.execute(
-                        TextSearchRequest(text=text, scope_id=request.scope_id, limit=recall_limit)
-                    )
-                ),
+                run_text,
             ),
         }
+        audio_locations = {
+            hit.asset_id: (hit.start_ms, hit.end_ms)
+            for result in text_box
+            for hit in result.hits
+            if hit.start_ms is not None and hit.end_ms is not None
+        }
+
         # 先固定 primary 基线，再把它的头部交给图做种子。不能把所有过取候选都
         # 送进图：那会让一个低置信度的尾部命中扩大遍历面，也会令图效果基线失去
         # 「图加入前实际交付头部」的含义。
@@ -453,6 +466,8 @@ class RetrieveEvidence:
                     channels=dict(candidate.channels),
                     raw_scores=dict(candidate.raw_scores),
                     evidence_class=candidate.evidence_class,
+                    audio_start_ms=audio_locations.get(candidate.asset_id, (None, None))[0],
+                    audio_end_ms=audio_locations.get(candidate.asset_id, (None, None))[1],
                 )
                 for candidate in fused[:limit]
             ),
