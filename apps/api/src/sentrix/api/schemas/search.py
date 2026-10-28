@@ -13,6 +13,9 @@ class SearchHit(BaseModel):
     # 通道 -> 该通道里的名次。S2 只有 visual_ann 一条，结构先按六路留好。
     channels: dict[str, int]
     raw_scores: dict[str, float]
+    # 音频/视频音轨文本命中时给播放器定位；仅由其他通道命中时为空。
+    audio_start_ms: int | None = None
+    audio_end_ms: int | None = None
 
 
 class ChannelTrace(BaseModel):
