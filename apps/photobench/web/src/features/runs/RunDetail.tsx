@@ -83,7 +83,6 @@ export interface RunDetailProps {
   rejudge: RejudgeCardProps;
   /** 1.0 `:3147-3284` 记忆层级面板的数据；缺省（组合层尚未接入）时不渲染该面板。 */
   memory?: MemoryLayerPanelProps;
-  onLoadTelemetry?: () => void;
 }
 
 export function RunDetail({
@@ -94,7 +93,6 @@ export function RunDetail({
   onExportSftTraces,
   rejudge,
   memory,
-  onLoadTelemetry,
 }: RunDetailProps) {
   return (
     <section id="detail-region">
@@ -155,11 +153,6 @@ export function RunDetail({
           <ErrorAnalysisPanel key={`analysis-${activeRun.run_id}`} runId={activeRun.run_id} terminal={["completed", "completed_with_errors", "failed", "cancelled", "interrupted"].includes(activeRun.status || "")} />
           {memory ? <MemoryLayerPanel key={activeRun.run_id} {...memory} /> : null}
           <h3 className="result-heading">结果指标</h3>
-          {activeRun.history_mode === "checkpoint" ? (
-            <p className="muted">当前为最近保存的摘要和遥测窗口。
-              <button className="btn compact" onClick={onLoadTelemetry}>读取整轮遥测曲线</button>
-            </p>
-          ) : null}
           {activeRun.persistence?.status ? <p className="error">结果保存异常：{String(activeRun.persistence.status)} · {String(activeRun.persistence.error || "")}</p> : null}
           <div className="result-phase-list">
             <TelemetryCard run={activeRun} />

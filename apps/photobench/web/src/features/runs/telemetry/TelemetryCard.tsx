@@ -370,7 +370,7 @@ function LegacyTelemetryCard({ run }: TelemetryCardProps) {
               <>阶段快照示意，共 {chartData.history.length} 个快照；横轴仅为快照序号，不表示真实耗时。</>
             ) : run?.history_mode === "checkpoint" ? (
               <>最近保存的遥测窗口，当前绘制 {chartData.history.length} 个点；整轮已采集 {sampleCount} 个采样点。
-                横轴从该窗口首点开始计时；可在上方点击“读取整轮遥测曲线”查看早期数据。</>
+                横轴从该窗口首点开始计时；全程曲线将自动加载。</>
             ) : run?.history_mode === "full" ? (
               <>完整测评过程，共 {sampleCount} 个采样点；曲线按全时段抽稀为 {chartData.history.length} 个点，峰值来自全部采样。</>
             ) : (
