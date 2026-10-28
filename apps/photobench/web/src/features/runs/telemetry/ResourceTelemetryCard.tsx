@@ -12,6 +12,10 @@ type Point = Record<string, any>;
 type Line = { key: string; label: string; color?: string; gpu?: boolean };
 type Graph = { title: string; unit: string; divisor: number; lines: Line[] };
 const SCOPE_COLORS = ["#5470c6", "#c66b24", "#27866a"];
+const PHASE_COLORS: Record<string, string> = {
+  model_deploy: "#64748b", album_create: "#0891b2", identity_seed: "#6366f1",
+  photo_import: "#0284c7", pipeline_processing: "#d97706", qa_eval: "#059669", gpu_metrics: "#9333ea",
+};
 const GRAPHS: Graph[] = [
   { title: "内存与显存占用", unit: "GiB", divisor: 1024,
     lines: RESOURCE_MEMORY_FIELDS.map(([label, key], i) => ({ label, key, color: SCOPE_COLORS[i % 3], gpu: i >= 3 })) },
@@ -20,29 +24,38 @@ const GRAPHS: Graph[] = [
   { title: "功率", unit: "W", divisor: 1, lines: [{ key: "power_draw_w", label: "采集范围内功率" }] },
 ];
 
-function option(graph: Graph, history: Point[], snapshots: boolean, sampledDown: boolean): EChartsOption {
+function option(graph: Graph, history: Point[], snapshots: boolean, sampledDown: boolean, phaseColors: boolean): EChartsOption {
   const start = telemetryNumber(history[0]?.t) ?? 0;
   const times = history.map((point, i) => snapshots ? i + 1 : (telemetryNumber(point.t) ?? start) - start);
-  const areas: Array<[{ name: string; xAxis: number }, { xAxis: number }]> = [];
+  const areas: Array<[{ name: string; xAxis: number; itemStyle: { color: string } }, { xAxis: number }]> = [];
+  const pieces: Array<{ gte: number; lt?: number; lte?: number; color: string }> = [];
   if (!snapshots) {
     let first = 0;
     for (let i = 1; i <= history.length; i++) {
       if (i < history.length && history[i]?.phase === history[first]?.phase) continue;
-      if (history[first]?.phase) areas.push([
-        { name: history[first]!.phase_label || history[first]!.phase, xAxis: times[first]! },
-        { xAxis: times[Math.min(i, history.length - 1)]! },
-      ]);
+      if (history[first]?.phase) {
+        const color = PHASE_COLORS[history[first]!.phase] ?? "#64748b";
+        const end = times[Math.min(i, history.length - 1)]!;
+        areas.push([
+          { name: history[first]!.phase_label || history[first]!.phase, xAxis: times[first]!, itemStyle: { color: `${color}16` } },
+          { xAxis: end },
+        ]);
+        pieces.push({ gte: times[first]!, ...(i === history.length ? { lte: end } : { lt: end }), color });
+      }
       first = i;
     }
   }
   return {
     animation: false,
-    grid: { left: 65, right: 28, top: 56, bottom: 65 },
+    grid: { left: 65, right: 35, top: 56, bottom: 80 },
     legend: { type: "scroll", top: 6 },
     tooltip: { trigger: "axis", confine: true, valueFormatter: (value) => typeof value === "number" ? `${value.toFixed(2)} ${graph.unit}` : "未采集" },
-    xAxis: { type: "value", min: snapshots ? 1 : 0, name: snapshots ? "快照序号" : "经过时间（秒）" },
+    xAxis: { type: "value", min: snapshots ? 1 : 0, max: times.at(-1), boundaryGap: [0, 0],
+      name: snapshots ? "快照序号" : "经过时间（秒）", nameLocation: "middle", nameGap: 32 },
     yAxis: { type: "value", min: 0, name: graph.unit },
-    dataZoom: [{ type: "inside", filterMode: "none" }, { type: "slider", height: 18, bottom: 14 }],
+    dataZoom: [{ type: "inside", filterMode: "none" }, { type: "slider", height: 18, bottom: 4 }],
+    visualMap: phaseColors && pieces.length ? [{ type: "piecewise", show: false, dimension: 0,
+      seriesIndex: graph.lines.map((_, index) => index), pieces, outOfRange: { color: "#64748b" } }] : [],
     series: graph.lines.map((line, lineIndex) => {
       const points: Array<[number, number | null]> = [];
       history.forEach((point, i) => {
@@ -53,8 +66,11 @@ function option(graph: Graph, history: Point[], snapshots: boolean, sampledDown:
         points.push([times[i]!, value === null ? null : value / graph.divisor]);
       });
       return { name: line.label, type: "line", showSymbol: false, connectNulls: false, smooth: false, data: points,
-        ...(line.color ? { itemStyle: { color: line.color }, lineStyle: { color: line.color, type: line.gpu ? "dashed" as const : "solid" as const } } : {}),
-        ...(lineIndex === 0 && areas.length ? { markArea: { silent: true, itemStyle: { color: "rgba(120,140,160,0.06)" },
+        emphasis: { focus: "series", blurScope: "coordinateSystem", lineStyle: { width: 3 } },
+        blur: { lineStyle: { opacity: 0 }, itemStyle: { opacity: 0 } },
+        itemStyle: { color: phaseColors ? "#64748b" : line.color },
+        lineStyle: { ...(!phaseColors && line.color ? { color: line.color } : {}), type: line.gpu ? "dashed" as const : "solid" as const },
+        ...(lineIndex === 0 && areas.length ? { markArea: { silent: true,
           label: { show: true, color: "#687888", fontSize: 10, position: "insideTop" as const }, data: areas } } : {}),
       };
     }),
@@ -67,12 +83,14 @@ function ResourceGraph({ graph, history, snapshots, sampledDown, revision }: {
   const canvas = useRef<HTMLDivElement>(null);
   const chart = useRef<EChartsType | null>(null);
   const previous = useRef("");
+  const [phaseColors, setPhaseColors] = useState(false);
   useEffect(() => {
     if (!canvas.current || history.length < 2) return;
     chart.current ??= echarts.init(canvas.current);
-    if (previous.current !== revision) {
-      chart.current.setOption(option(graph, history, snapshots, sampledDown), { replaceMerge: ["series"] });
-      previous.current = revision;
+    const drawingRevision = `${revision}:${phaseColors}`;
+    if (previous.current !== drawingRevision) {
+      chart.current.setOption(option(graph, history, snapshots, sampledDown, phaseColors), { replaceMerge: ["series", "visualMap"] });
+      previous.current = drawingRevision;
     }
     chart.current.resize();
     const resize = () => chart.current?.resize();
@@ -86,9 +104,12 @@ function ResourceGraph({ graph, history, snapshots, sampledDown, revision }: {
       element = element.parentElement;
     }
     return () => { observer?.disconnect(); parents.forEach(parent => parent.removeEventListener("toggle", resize)); };
-  }, [graph, history, snapshots, sampledDown, revision]);
+  }, [graph, history, snapshots, sampledDown, revision, phaseColors]);
   useEffect(() => () => { chart.current?.dispose(); chart.current = null; }, []);
-  return <div className="telemetry-chart"><b>{graph.title}</b>
+  return <div className="telemetry-chart"><div className="telemetry-chart-header"><b>{graph.title}</b>
+    {!snapshots && history.some(point => point.phase) ? <label>
+      <input type="checkbox" checked={phaseColors} onChange={event => setPhaseColors(event.target.checked)} />曲线按阶段着色
+    </label> : null}</div>
     {history.length >= 2
       ? <div ref={canvas} className="telemetry-chart-canvas" role="img" aria-label={`${graph.title}趋势`} />
       : <p className="muted">等待至少两个采样点。</p>}
@@ -131,7 +152,7 @@ export function ResourceTelemetryCard({ run }: { run: Run | null | undefined }) 
     <summary className="phase-title"><b>实时资源遥测</b><span className={`phase-status ${live.status === "running" ? "running" : "completed"}`}>
       {live.status === "running" ? "实时更新中" : live.status === "stop_pending" ? "停止未确认" : "已停止"}
     </span></summary>
-    <p className="metric-calc-time">内存与显存统一用 GiB 展示，实线为内存，虚线为 GPU 分配。同色表示相同范围。产品包含主模型，各项不相加。缺失处曲线断开。</p>
+    <p className="metric-calc-time">内存与显存统一用 GiB 展示，实线为内存，虚线为 GPU 分配。默认同色表示相同范围，背景色区分阶段。悬浮图例可单独查看一项。产品包含主模型，各项不相加。</p>
     <div className="phase-metrics live-telemetry-metrics">{fields.map(([label, key]) =>
       <div className="phase-metric" key={key}><span>{label}</span>
         <strong>{telemetryNumber(latest[key]) === null ? "未采集" : fmtMemory(latest[key])}</strong>

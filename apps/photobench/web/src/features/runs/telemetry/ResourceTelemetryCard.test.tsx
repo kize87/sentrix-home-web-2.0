@@ -38,7 +38,7 @@ describe("resource telemetry v1", () => {
     expect(memory.series[3].lineStyle.type).toBe("dashed");
     expect(memory.series[0].lineStyle.color).toBe(memory.series[3].lineStyle.color);
     expect(memory.xAxis.type).toBe("value");
-    expect(memory.series[0].markArea.data[0]).toEqual([{ name: "数据导入", xAxis: 0 }, { xAxis: 5 }]);
+    expect(memory.series[0].markArea.data[0]).toEqual([expect.objectContaining({ name: "数据导入", xAxis: 0 }), { xAxis: 5 }]);
     expect(memory.series[0].data).toEqual([[0, .25], [1, null], [3, null], [5, .25]]);
     expect(memory.series[0].connectNulls).toBe(false);
     expect(gpu.series[4].data.every((point: any[]) => point[1] === null)).toBe(true);
@@ -81,5 +81,31 @@ describe("resource telemetry v1", () => {
     value.telemetry_live!.samples_count = 30;
     render(<TelemetryCard run={value} />);
     expect(charts.instances[0].setOption.mock.calls[0][0].series[2].data).toEqual([[0, 1], [1, 1], [5, 1]]);
+  });
+  it("fits the last sample and isolates a hovered series without changing legend selection", () => {
+    render(<TelemetryCard run={run()} />);
+    const graph = charts.instances[0].setOption.mock.calls[0][0];
+    expect(graph.xAxis.max).toBe(5);
+    expect(graph.xAxis.boundaryGap).toEqual([0, 0]);
+    expect(graph.legend.selected).toBeUndefined();
+    expect(graph.series.every((series: any) => series.emphasis.focus === "series" && series.blur.lineStyle.opacity === 0)).toBe(true);
+    expect(graph.series[0].markArea.data[0][0].itemStyle.color).not.toBe(graph.series[0].markArea.data[1][0].itemStyle.color);
+  });
+  it("switches between metric colors and non-overlapping phase colors while preserving curve data", () => {
+    const view = render(<TelemetryCard run={run()} />);
+    const instance = charts.instances[0];
+    const original = instance.setOption.mock.calls[0][0];
+    fireEvent.click(view.getByRole("checkbox", { name: "曲线按阶段着色" }));
+    const colored = instance.setOption.mock.calls[1][0];
+    expect(colored.visualMap[0].pieces).toEqual([
+      { gte: 0, lt: 5, color: "#0284c7" }, { gte: 5, lte: 5, color: "#059669" },
+    ]);
+    expect(colored.visualMap[0].seriesIndex).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(colored.series[0].lineStyle.color).toBeUndefined();
+    expect(colored.series[0].data).toEqual(original.series[0].data);
+    fireEvent.click(view.getByRole("checkbox", { name: "曲线按阶段着色" }));
+    expect(instance.setOption.mock.calls[2][0].visualMap).toEqual([]);
+    expect(instance.setOption.mock.calls[2][1]).toEqual({ replaceMerge: ["series", "visualMap"] });
+    expect(charts.init).toHaveBeenCalledTimes(1);
   });
 });
