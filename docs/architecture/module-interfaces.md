@@ -1286,3 +1286,11 @@ relabeled as physically deduplicated totals. See photobench-metrics-contract.md.
 ### 2026-10-29 PhotoBench 对话与调用轨迹
 
 只读QA摘要增加display_question、conversation_turn_count、conversation_context_mode，原question保留；状态补读已存turn_status。工具按同轮父调用/步骤绑定，重试IO按attempt精确对应。ClaimReview增加可选model_call指标，RunTurn统一记录成功与失败核验调用；不改变任务决策。2.0 Agent墙钟与外部Judge耗时独立。契约、历史兼容边界及验证见[轨迹对齐说明](../refactor/2026-10-29-agent-trace-alignment.md)。
+
+
+### 2026-10-29 PhotoBench分析端口增量
+
+`AnalysisBackend`保留现有方法，新增`view(job_id, filters, page, page_size)`与`evidence(job_id, index)`。
+view统一范围统计与分页；evidence读取报告的不可变快照。不存在返回KeyError，状态/快照不可用返回ValueError，API映射沿既有错误契约。
+AI业务提示词与抽样/引用校验位于domain，HTTP及持久化位于infrastructure，仍由bootstrap装配既有AnalysisBackend。
+新增API/OpenAPI和前端类型同步，详见[错误分析接口](photobench-error-analysis.md)。

@@ -17,4 +17,20 @@ class AnalysisBackend(Protocol):
     def cancel(self, job_id: str) -> dict[str, Any]: ...
     def work(self) -> list[dict[str, Any]]: ...
     def cases(self, job_id: str, filters: Mapping[str, Any], page: int, page_size: int) -> dict[str, Any]: ...
+    def view(self, job_id: str, filters: Mapping[str, Any], page: int, page_size: int) -> dict[str, Any]:
+        """Aggregate the entire filtered scope and page cases; missing job raises KeyError.
+
+        Incomplete/non-rule reports raise ValueError. Events match conjunctively,
+        behaviors within one turn. Read-only; never changes run data.
+        """
+        ...
+
+    def evidence(self, job_id: str, index: int) -> dict[str, Any]:
+        """Read the immutable report snapshot. Missing job/item raises KeyError.
+
+        Legacy reports without a pinned snapshot raise ValueError; never substitute
+        the current run, which may have a different GT or trajectory.
+        """
+        ...
+
     def export(self, job_id: str, format: str, filters: Mapping[str, Any]) -> str: ...

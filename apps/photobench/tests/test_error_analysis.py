@@ -358,6 +358,17 @@ def test_api_contract_pagination_cancel_and_legacy_source(tmp_path: Path):
         r = client.get(f"/api/v1/analyses/{key}")
         assert r.status_code == 200 and r.json()["report"]["denominators"]["qa"] == 1
         assert client.get(f"/api/v1/analyses/{key}/cases?score=2").json()["total"] == 0
+        pinned = client.get(f"/api/v1/analyses/{key}/evidence/0").json()
+        assert pinned["item"]["reference_answer"] == "GT"
+        assert pinned["result_fingerprint"] == r.json()["report"]["result_fingerprint"]
+        view = client.get(f"/api/v1/analyses/{key}/view?score=0&page_size=1").json()
+        assert view["total"] == view["summary"]["item_count"] == 1
+        assert client.get(f"/api/v1/analyses/{key}/view?score=2").json()["summary"]["item_count"] == 0
+        current = json.loads((p / "run.json").read_text())
+        current["items"][0]["reference_answer"] = "new GT after rejudge"
+        (p / "run.json").write_text(json.dumps(current))
+        assert client.get(f"/api/v1/analyses/{key}/evidence/0").json()["item"]["reference_answer"] == "GT"
+
         assert client.get(f"/api/v1/analyses/{key}/cases?page_size=101").status_code == 422
         selected = "task_type=T5_event_summary&angle=activity&difficulty=medium&score=low&anomaly=no"
         assert client.get(f"/api/v1/analyses/{key}/cases?{selected}").json()["total"] == 1
@@ -389,23 +400,31 @@ def test_ai_requires_known_refs_provider_explicit_selection_and_never_sends_secr
 ):
     import httpx
 
-    import photobench.infrastructure.error_analysis.worker as worker
+    import photobench.infrastructure.error_analysis.ai_worker as worker
 
     p = write_run(tmp_path)
     parent = tmp_path / "parent"
     parent.mkdir()
     c = case_from_item(item(), 0)
     (parent / "cases.jsonl").write_text(json.dumps(c) + "\n")
+    (parent / "input.jsonl").write_text(json.dumps(item()) + "\n")
+    (parent / "report.json").write_text(json.dumps({"result_fingerprint": "f", "rule_version": 9}))
     original = (p / "results.jsonl").read_bytes()
     targets: list[dict[str, Any]] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         targets.append(json.loads(request.content))
         answer = {
-            k: "diagnosis"
-            for k in ["observations", "possible_causes", "missing_evidence", "recommendations", "experiments"]
+            "claims": [
+                {
+                    "kind": "hypothesis",
+                    "text": "diagnosis",
+                    "limitations": "待验证",
+                    "evidence_refs": ["invented-step"] if len(targets) == 1 else ["i0:case"],
+                }
+            ],
+            "missing_evidence": [],
         }
-        answer["evidence_refs"] = ["invented-step"] if len(targets) == 1 else ["i0:case"]
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(answer)}}]})
 
     real_client = httpx.Client
@@ -436,7 +455,7 @@ def test_ai_requires_known_refs_provider_explicit_selection_and_never_sends_secr
         )
         result = json.loads((target / "diagnosis.json").read_text())
         assert result["cases"][0]["valid"] is bool(i)
-        assert result["covered"] == 1
+        assert result["covered"] == i
         assert "secret-value" not in (target / "job.json").read_text()
         assert "secret-value" not in (target / "diagnosis.json").read_text()
     assert len(targets) == 2
@@ -568,7 +587,7 @@ def test_task_aliases_merge_before_counting_and_filters_exports_share_the_catego
     cases = [case_from_item(row, i) for i, row in enumerate(raw)]
     r = report(cases)
     assert raw == before
-    assert r["rule_version"] == 8
+    assert r["rule_version"] == 9
     media, behavior = r["groups"]["content_type"]
     assert media == {
         "value": "T1_retrieve_media",

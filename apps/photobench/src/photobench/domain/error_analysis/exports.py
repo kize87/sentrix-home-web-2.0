@@ -197,8 +197,8 @@ def export_report(
         "filters": dict(filters),
     }
     body = (
-        f"<p>全部样本 {report['item_count']}；本次筛选 {len(cases)} 题。"
-        "统计图使用全部样本；下方案例使用所选筛选条件。离线可读，无网络依赖。</p>"
+        f"<p>全部样本 {report.get('all_items', report['item_count'])}；本次筛选 {len(cases)} 题。"
+        "统计图与案例使用相同筛选条件。离线可读，无网络依赖。</p>"
         "<h2>来源与筛选</h2><pre>" + _escape(json.dumps(source, ensure_ascii=False, indent=2)) + "</pre>"
         "<h2>统计口径</h2><ul>" + "".join(f"<li>{_escape(x)}</li>" for x in report["definitions"]) + "</ul>"
         "<h2>总览与有效分母</h2>"
@@ -206,7 +206,7 @@ def export_report(
         + _table(["分母", "数量"], [[k, v] for k, v in report["denominators"].items()])
     )
     body += (
-        "<h2>任务完成质量（全部题目）</h2><p>2分：完成，1分：部分完成，0分：未完成。适用于回答、拒答和澄清；行为是否符合预期另行统计。</p>"
+        "<h2>任务完成质量（当前范围）</h2><p>2分：完成，1分：部分完成，0分：未完成。适用于回答、拒答和澄清；行为是否符合预期另行统计。</p>"
         + _table(
             ["任务完成质量", "题数"],
             [[label, report["counts"].get("score_" + value, 0)] for value, label in SCORE_LABELS.items()],
@@ -378,6 +378,78 @@ def export_auxiliary(report: dict[str, Any], kind: str, format: str) -> str:
     """Comparison / AI artifacts keep factual provenance in each export."""
     if format == "json":
         return json.dumps(report, ensure_ascii=False, indent=2)
+    if kind == "ai" and report.get("schema_version") == 2:
+        meta = {
+            k: report.get(k)
+            for k in (
+                "scope",
+                "coverage",
+                "issues",
+                "facts",
+                "model",
+                "provider_id",
+                "prompt_version",
+                "configuration_fingerprint",
+                "requests",
+                "summary_status",
+                "summary_error",
+            )
+        }
+        claim_rows = [("overview", "", c) for c in (report.get("overview") or {}).get("claims", [])]
+        claim_rows += [
+            (str(case["index"]), case["qa_id"], c)
+            for case in report["cases"]
+            if case["valid"]
+            for c in case["result"].get("claims", [])
+        ]
+        if format == "csv":
+            return _csv(
+                [
+                    ["scope_or_index", "qa_id", "kind", "text", "evidence_refs", "limitations"],
+                    ["metadata", "", "source_and_coverage", json.dumps(meta, ensure_ascii=False), "", ""],
+                    *[
+                        [i, qa, c["kind"], c["text"], ";".join(c["evidence_refs"]), c["limitations"]]
+                        for i, qa, c in claim_rows
+                    ],
+                    *[
+                        [str(c["index"]), c["qa_id"], c.get("status"), c.get("error"), "", ""]
+                        for c in report["cases"]
+                        if not c["valid"]
+                    ],
+                ]
+            )
+        if format == "html":
+            body = "<h2>AI 问题总览与逐题诊断</h2><p>" + _escape(report["note"]) + "</p>"
+            body += _table(["指标", "数量"], [[k, v] for k, v in report["coverage"].items()])
+            if report.get("summary_error"):
+                body += "<p>汇总失败：" + _escape(report["summary_error"]) + "</p>"
+            for _i, qa, c in claim_rows:
+                body += (
+                    "<section><h3>"
+                    + _escape(qa or "问题总览")
+                    + " · "
+                    + _escape(
+                        {
+                            "observation": "记录观察",
+                            "hypothesis": "可能原因（待验证）",
+                            "recommendation": "建议验证",
+                        }[c["kind"]]
+                    )
+                    + "</h3><p>"
+                    + _escape(c["text"])
+                    + "</p><p>限制："
+                    + _escape(c["limitations"])
+                    + "</p><p>证据："
+                    + _escape(" / ".join(c["evidence_refs"]))
+                    + "</p></section>"
+                )
+            body += (
+                "<details><summary>来源、失败记录与实际用量</summary><pre>"
+                + _escape(json.dumps({**meta, "cases": report["cases"]}, ensure_ascii=False, indent=2))
+                + "</pre></details>"
+            )
+            return _document(body)
+        raise ValueError("unknown format")
     rows = report.get("rows", []) if kind == "compare" else report.get("cases", [])
     cells = [["qa_id", "pairing", "quality_change", "execution_changed", "valid", "details"]]
     cells.extend(

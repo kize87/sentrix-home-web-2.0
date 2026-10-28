@@ -18,7 +18,7 @@ from photobench.domain.error_analysis.taxonomy import (
 )
 from photobench.domain.runs.analysis import judge_score_for_summary, retrieval_metric_eligible
 
-RULE_VERSION = 8
+RULE_VERSION = 9
 TERMINAL = {"completed", "completed_with_errors", "failed", "cancelled", "interrupted"}
 NORMAL = {"answered", "answered_with_gap", "policy_refusal"}
 LABELS = {
@@ -36,7 +36,9 @@ LABELS = {
     "step_budget_exhausted": "步骤预算耗尽",
     "tool_budget_exhausted": "工具预算耗尽",
     "turn_timeout": "整轮执行超时",
-    "tool_error": "工具执行异常/拒绝",
+    "tool_error": "工具执行异常",
+    "evidence_unavailable": "未取得所需记录",
+    "policy_denied": "调用被策略拒绝",
     "tool_timeout": "工具执行超时",
     "tool_internal_unavailable": "工具内部模型不可用（原因未记录）",
     "retrieval_degraded": "检索降级",
@@ -98,11 +100,36 @@ def classify(call: Mapping[str, Any]) -> tuple[str, str]:
     return "service_error", "recorded_error"
 
 
+def trace_records(item: Mapping[str, Any], turns: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    """Preserve exact source positions even when a legacy root list is absent."""
+    root = [
+        dict(r, _source_path=f"{key}[{i}]") for i, r in enumerate(item.get(key) or []) if isinstance(r, dict)
+    ]
+    if root:
+        return root
+    rows = []
+    for ti, turn in enumerate(turns):
+        nested = (
+            (turn.get("trace_bundle") or {}).get("model_calls", [])
+            if key == "model_call_metrics"
+            else turn.get("tool_trace", [])
+        )
+        suffix = "trace_bundle.model_calls" if key == "model_call_metrics" else "tool_trace"
+        for i, record in enumerate(nested):
+            if isinstance(record, dict):
+                rows.append(
+                    dict(record, conversation_turn=ti, _source_path=f"runtime_turns[{ti}].{suffix}[{i}]")
+                )
+    return rows
+
+
 def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
     turns = [x for x in item.get("runtime_turns") or [] if isinstance(x, dict)]
     if not turns:
         turns = [dict(item)]
     events: list[dict[str, Any]] = []
+    context: dict[str, Any] = {}
+    inventory: list[dict[str, Any]] = []
 
     def add(code: str, source: str, turn: int, step: Any = None, **facts: Any) -> None:
         events.append(
@@ -115,15 +142,32 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                 "step_id": str(step) if step is not None else None,
                 "recovery": "unknown",
                 "basis": "recorded_fact",
+                **context,
                 **facts,
             }
         )
 
-    calls = [c for c in item.get("model_call_metrics") or [] if isinstance(c, dict)]
+    calls = trace_records(item, turns, "model_call_metrics")
     for pos, call in enumerate(calls):
         turn = int(call.get("conversation_turn") or 0)
         step = call.get("step_id")
         role = str(call.get("call_type") or "agent")
+        context = {
+            "component": role,
+            "call_key": f"i{index}:t{turn}:model{pos}",
+            "model_call_id": call.get("call_id"),
+            "parent_step_id": call.get("parent_step_id"),
+            "evidence_refs": [
+                {
+                    "kind": "model",
+                    "path": call["_source_path"],
+                    "turn": turn,
+                    "index": pos,
+                    "call_id": call.get("call_id"),
+                    "step_id": step,
+                }
+            ],
+        }
         if (
             call.get("status") in {"error", "failed"}
             or call.get("error")
@@ -142,13 +186,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                 ),
                 None,
             )
-            recovery = "recovered" if following is not None else "unknown"
-            if (
-                following is None
-                and turn < len(turns)
-                and turns[turn].get("termination_reason") not in NORMAL
-            ):
-                recovery = "not_recovered"
+            recovery = "recovered" if following is not None or call.get("recovered_by_call_id") else "unknown"
             add(
                 code,
                 "model_call_metrics",
@@ -186,13 +224,40 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                     tool_call_id=fact.get("call_id"),
                     call_id=call.get("call_id"),
                 )
-    tools = [t for t in item.get("tool_trace") or [] if isinstance(t, dict)]
-    for tool in tools:
+    tools = trace_records(item, turns, "tool_trace")
+    for tool_index, tool in enumerate(tools):
         ti = int(tool.get("conversation_turn") or 0)
         result = tool.get("result") or {}
-        if tool.get("status") in {"error", "failed", "denied", "partial"}:
+        failure = result.get("failure_reason") if isinstance(result, dict) else None
+        context = {
+            "tool_name": tool.get("tool") or tool.get("tool_name") or tool.get("name") or "unknown",
+            "tool_call_id": tool.get("call_id") or tool.get("tool_call_id"),
+            "parent_step_id": tool.get("parent_step_id"),
+            "component": "tool",
+            "failure_reason": failure
+            or (
+                result.get("degraded_reason") if isinstance(result, dict) and result.get("degraded") else None
+            ),
+            "call_key": f"i{index}:t{ti}:tool{tool_index}",
+            "evidence_refs": [
+                {
+                    "kind": "tool",
+                    "path": tool["_source_path"],
+                    "turn": ti,
+                    "index": tool_index,
+                    "call_id": tool.get("call_id") or tool.get("tool_call_id"),
+                    "step_id": tool.get("step_id"),
+                }
+            ],
+        }
+        inventory.append({"turn": ti, "tool_name": context["tool_name"], "call_key": context["call_key"]})
+        if tool.get("status") in {"error", "failed", "denied", "partial"} or failure:
             add(
-                "tool_timeout"
+                "evidence_unavailable"
+                if failure in {"no_text_detected", "photo_not_found", "asset_not_found"}
+                else "policy_denied"
+                if tool.get("status") == "denied"
+                else "tool_timeout"
                 if any(
                     w in str(tool.get("error") or tool.get("text") or "").lower()
                     for w in ("timed out", "timeout", "超时")
@@ -214,6 +279,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                     ti,
                     tool.get("step_id"),
                     role="tool_internal",
+                    component="tool_internal",
                 )
             for call in internal:
                 if call.get("status") == "error":
@@ -224,6 +290,8 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                         ti,
                         tool.get("step_id"),
                         role="tool_internal",
+                        component="tool_internal",
+                        model_call_id=call.get("call_id"),
                         call_id=call.get("call_id"),
                         basis=basis,
                         diagnostics=call.get("diagnostics") or {},
@@ -239,6 +307,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                 role="tool",
                 message=str(result.get("degraded_reason") or ""),
             )
+    context = {}
     turn_rows: list[dict[str, Any]] = []
     for ti, turn_record in enumerate(turns):
         reason = str(turn_record.get("termination_reason") or "")
@@ -256,7 +325,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                     payload.get("step_id"),
                     event_index=ei,
                     message=str(event.get("text") or ""),
-                    recovery="recovered" if reason in NORMAL else "unknown",
+                    recovery="recovered" if payload.get("recovered_by_call_id") else "unknown",
                 )
         terminal_codes = {
             "parse_failure": "parse_failure_unknown",
@@ -297,6 +366,11 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                 "difficulty": saved_labels(annotation.get("difficulty")),
                 "answerability": saved_labels(annotation.get("answerability")),
                 "turn": ti,
+                "question": str(turn_record.get("message") or turn_record.get("question") or "")[:8000],
+                "answer": str(turn_record.get("answer") or "")[:8000],
+                "reference_answer": str(turn_record.get("reference_answer") or "")[:8000],
+                "context_turn_count": turn_record.get("context_turn_count"),
+                "conversation_id": turn_record.get("conversation_id"),
                 "turn_id": turn_record.get("turn_id"),
                 "termination_reason": reason,
                 "recorded_expected": expected,
@@ -338,7 +412,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
             if not isinstance(judge, dict):
                 continue
             observations = judge.get("call_observations") or []
-            for call in observations:
+            for ci, call in enumerate(observations):
                 if call.get("status") != "error":
                     continue
                 code, basis = classify(call)
@@ -347,11 +421,26 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                     role + "_judge.call_observations",
                     ti,
                     role="judge",
+                    component="judge",
+                    call_key=f"i{index}:t{ti}:{role}_judge{ci}",
+                    model_call_id=call.get("call_id"),
+                    evidence_refs=[
+                        {
+                            "kind": "judge",
+                            "turn": ti,
+                            "index": ci,
+                            "path": ("" if len(turns) == 1 else f"runtime_turns[{ti}].")
+                            + {"answer": "judge", "behavior": "task_judge", "evidence": "evidence_judge"}[
+                                role
+                            ]
+                            + f".call_observations[{ci}]",
+                        }
+                    ],
                     basis=basis,
                     call_id=call.get("call_id"),
                     diagnostics=call.get("diagnostics") or {},
                     message=str(call.get("error") or "")[:2000],
-                    recovery="recovered" if call.get("recovered_by_call_id") else "not_recovered",
+                    recovery="recovered" if call.get("recovered_by_call_id") else "unknown",
                     recovered_by=call.get("recovered_by_call_id"),
                 )
             if (
@@ -370,6 +459,29 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
                 )
                 if not any(c.get("status") == "error" for c in observations):
                     add(code, role + "_judge", ti, role="judge", message=text[:2000])
+    for event in events:
+        code = event["code"]
+        event.setdefault("component", event.get("role") or "agent")
+        event["issue_kind"] = (
+            "evidence_unavailable"
+            if code == "evidence_unavailable"
+            else "policy"
+            if code == "policy_denied"
+            else "degraded"
+            if code == "retrieval_degraded"
+            else "timeout"
+            if "timeout" in code
+            else "budget"
+            if "budget" in code or code.startswith("context_")
+            else "invalid_format"
+            if "json" in code or "format" in code or "parse" in code
+            else "service_error"
+        )
+        event["related_event_ids"] = [
+            e["event_id"]
+            for e in events
+            if event.get("call_key") and e.get("call_key") == event["call_key"] and e is not event
+        ]
     score = judge_score_for_summary(item.get("judge"))
     reasons = [t["termination_reason"] for t in turn_rows]
     status = (
@@ -525,7 +637,12 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
         "context_windows": context_windows,
         "index": index,
         "qa_id": str(item.get("qa_id") or ""),
-        "question": str(item.get("question") or "")[:8000],
+        "question": str(
+            item.get("display_question")
+            or ((turns[0].get("message") or turns[0].get("question")) if len(turns) > 1 else None)
+            or item.get("question")
+            or ""
+        )[:8000],
         "reference_answer": str(item.get("reference_answer") or "")[:8000],
         "answer": str(item.get("answer") or "")[:8000],
         "text_truncated": any(
@@ -592,6 +709,7 @@ def case_from_item(item: Mapping[str, Any], index: int) -> dict[str, Any]:
             for key in ("judge", "task_judge", "evidence_judge")
         ),
         "tool_calls": len(tools),
+        "tool_inventory": inventory,
         "tool_json_total": sum(len(c.get("tool_argument_parse_facts") or []) for c in calls),
         "tool_json_invalid": sum(e["code"] == "tool_argument_json_invalid" for e in events),
         "retrieval_counts": {"candidate": retrieval, "delivery": delivery},
@@ -803,121 +921,9 @@ class Aggregator:
 
 
 def matches(case: Mapping[str, Any], filters: Mapping[str, Any]) -> bool:
-    if filters.get("content_unit") == "turn":
-        turn_filters = {
-            k: v
-            for k, v in filters.items()
-            if k
-            in {
-                "ability_family",
-                "ability_type",
-                "benchmark_group",
-                "content_type",
-                "content_subtype",
-                "difficulty",
-                "answerability",
-                "score",
-                "expected_action",
-                "actual_action",
-                "behavior_result",
-                "test_scenario",
-            }
-            and v
-        }
+    from photobench.domain.error_analysis.query import select_case
 
-        def turn_matches(turn: Mapping[str, Any]) -> bool:
-            for key, value in turn_filters.items():
-                if key in {
-                    "ability_family",
-                    "ability_type",
-                    "benchmark_group",
-                    "content_type",
-                    "content_subtype",
-                    "difficulty",
-                    "answerability",
-                } and value not in turn.get(key, []):
-                    return False
-                if key == "score" and (
-                    turn.get("score") not in (0, 1) if value == "low" else str(turn.get("score")) != value
-                ):
-                    return False
-                if (
-                    key in {"expected_action", "actual_action"}
-                    and str(turn.get("expected" if key == "expected_action" else "actual") or "unknown")
-                    != value
-                ):
-                    return False
-                if (
-                    key == "behavior_result"
-                    and (
-                        "correct"
-                        if turn["behavior_correct"] is True
-                        else "incorrect"
-                        if turn["behavior_correct"] is False
-                        else "missing"
-                    )
-                    != value
-                ):
-                    return False
-                if key == "test_scenario" and value not in turn.get("test_scenarios", []):
-                    return False
-            return True
-
-        if not any(turn_matches(t) for t in case["turns"]):
-            return False
-        filters = {k: v for k, v in filters.items() if k not in turn_filters}
-    behavioral = {
-        k: v
-        for k, v in filters.items()
-        if k in {"expected_action", "actual_action", "behavior_result", "test_scenario"} and v
-    }
-    if behavioral and not any(
-        all(
-            (
-                (
-                    "correct"
-                    if turn["behavior_correct"] is True
-                    else "incorrect"
-                    if turn["behavior_correct"] is False
-                    else "missing"
-                )
-                == v
-                if k == "behavior_result"
-                else v in turn.get("test_scenarios", [])
-                if k == "test_scenario"
-                else str(turn["expected" if k == "expected_action" else "actual"] or "unknown") == v
-            )
-            for k, v in behavioral.items()
-        )
-        for turn in case["turns"]
-    ):
-        return False
-    for k, v in filters.items():
-        if v in (None, ""):
-            continue
-        if k in {"expected_action", "actual_action", "behavior_result", "test_scenario"}:
-            continue
-        if k in DIMENSIONS and category_value(k, str(v)) not in {
-            category_value(k, value) for value in case["dimension_labels"].get(k, [])
-        }:
-            return False
-        if k == "code" and v not in {e["code"] for e in case["events"]}:
-            return False
-        if k == "execution" and case.get(k) != v:
-            return False
-        if k == "score":
-            if v == "low":
-                if case.get("score") not in (0, 1):
-                    return False
-            elif str(case.get(k)) != str(v):
-                return False
-        if k == "anomaly" and bool(case["events"]) != (v == "yes"):
-            return False
-        if k == "recovery" and not any(e["recovery"] == v for e in case["events"]):
-            return False
-        if k == "actual_action" and not any(t["actual"] == v for t in case["turns"]):
-            return False
-    return True
+    return select_case(case, filters) is not None
 
 
 def compare_reports(

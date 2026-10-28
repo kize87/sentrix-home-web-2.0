@@ -11,7 +11,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from photobench.domain.error_analysis.diagnosis import PROMPT_VERSION, evidence_package
 from photobench.domain.error_analysis.exports import export_auxiliary, export_report
+from photobench.domain.error_analysis.query import filtered_view, select_case
 from photobench.domain.error_analysis.rules import RULE_VERSION, matches
 from photobench.infrastructure.error_analysis.worker import atomic, lines, revision, run_worker
 
@@ -32,6 +34,7 @@ class FileAnalysisBackend:
         self._secret: dict[str, dict[str, Any]] = {}
         self._current: tuple[str, Any, Any, Any] | None = None
         self._context = multiprocessing.get_context("spawn")
+        self._case_cache: dict[str, list[dict[str, Any]]] = {}
 
     def _directory(self, job_id: str) -> Path:
         if len(job_id) != 32 or any(c not in "0123456789abcdef" for c in job_id):
@@ -167,17 +170,31 @@ class FileAnalysisBackend:
                         raise ValueError("report belongs to a different run")
                     values[option.replace("_job", "_path")] = str(self._directory(previous["job_id"]))
                 if kind == "ai":
-                    indices = values.get("indices")
+                    if not 1 <= int(values.get("max_cases", 12)) <= 100:
+                        raise ValueError("max_cases must be between 1 and 100")
+                    all_cases = list(lines(Path(values["parent_path"]) / "cases.jsonl"))
+                    scope = values.get("scope", "selection")
+                    indices = values.get("indices") or []
+                    if scope == "run":
+                        indices = [c["index"] for c in all_cases]
+                    elif scope == "filter":
+                        indices = [c["index"] for c in all_cases if matches(c, values.get("filters", {}))]
                     if (
-                        not isinstance(indices, list)
-                        or not 1 <= len(indices) <= 20
+                        not indices
                         or any(type(i) is not int or i < 0 for i in indices)
                         or len(set(indices)) != len(indices)
                     ):
-                        raise ValueError("select 1–20 distinct case indices")
-                    valid = {c["index"] for c in lines(Path(values["parent_path"]) / "cases.jsonl")}
-                    if not set(indices) <= valid:
+                        raise ValueError("select distinct case indices in a nonempty scope")
+                    if not set(indices) <= {c["index"] for c in all_cases}:
                         raise ValueError("unknown case index")
+                    values["indices"] = sorted(indices)
+                    if values.get("resume_job"):
+                        resume = self.get(str(values["resume_job"]))
+                        if resume["kind"] != "ai" or resume["options"]["parent_job"] != values["parent_job"]:
+                            raise ValueError("resume requires the same source report")
+                        if resume["status"] in ACTIVE:
+                            raise ValueError("analysis is still active")
+                        values["resume_path"] = str(self._directory(resume["job_id"]))
             else:
                 raise ValueError("unknown kind")
             key = uuid.uuid4().hex
@@ -207,6 +224,13 @@ class FileAnalysisBackend:
         if job["kind"] != "rules":
             keys = ["parent_job"] if job["kind"] == "ai" else ["left_job", "right_job"]
             try:
+                if job["kind"] == "ai":
+                    diagnosis = self._directory(job["job_id"]) / "diagnosis.json"
+                    if (
+                        diagnosis.is_file()
+                        and json.loads(diagnosis.read_text()).get("prompt_version") != PROMPT_VERSION
+                    ):
+                        return True
                 return any(self._stale(self.get(job["options"][key])) for key in keys)
             except (KeyError, ValueError, OSError):
                 return True
@@ -283,20 +307,57 @@ class FileAnalysisBackend:
         job = self.get(job_id)
         if job["status"] != "completed" or job["kind"] != "rules":
             raise ValueError("completed rules report required")
-        page = max(1, page)
-        page_size = max(1, min(100, page_size))
-        items = []
-        total = 0
-        for case in lines(self._directory(job_id) / "cases.jsonl"):
-            if matches(case, filters):
-                if (page - 1) * page_size <= total < page * page_size:
-                    items.append(case)
-                total += 1
-        return {"items": items, "total": total, "page": page, "page_size": page_size}
+        selected = [x for c in self._cases(job_id) if (x := select_case(c, filters)) is not None]
+        return {
+            "items": selected[(page - 1) * page_size : page * page_size],
+            "total": len(selected),
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def _cases(self, job_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            if job_id not in self._case_cache:
+                if len(self._case_cache) >= 4:
+                    self._case_cache.pop(next(iter(self._case_cache)))
+                self._case_cache[job_id] = list(lines(self._directory(job_id) / "cases.jsonl"))
+            return self._case_cache[job_id]
+
+    def view(self, job_id: str, filters: Mapping[str, Any], page: int, page_size: int) -> dict[str, Any]:
+        job = self.get(job_id)
+        if job["kind"] != "rules" or job["status"] != "completed":
+            raise ValueError("completed rules report required")
+        report = json.loads((self._directory(job_id) / "report.json").read_text())
+        return filtered_view(self._cases(job_id), report, filters, page, page_size)
+
+    def evidence(self, job_id: str, index: int) -> dict[str, Any]:
+        job = self.get(job_id)
+        if job["kind"] != "rules" or job["status"] != "completed":
+            raise ValueError("completed rules report required")
+        path = self._directory(job_id) / "input.jsonl"
+        if not path.exists():
+            raise ValueError("此历史报告未保存证据快照，请重新生成规则报告")
+        for i, item in enumerate(lines(path)):
+            if i == index:
+                return {
+                    "item": item,
+                    "evidence_locations": {
+                        r["id"]: r["path"]
+                        for r in evidence_package(self._cases(job_id)[index], item)["records"]
+                    },
+                    "job_id": job_id,
+                    "index": index,
+                    "result_fingerprint": json.loads((path.parent / "report.json").read_text())[
+                        "result_fingerprint"
+                    ],
+                }
+        raise KeyError(index)
 
     def export(self, job_id: str, format: str, filters: Mapping[str, Any]) -> str:
         job = self.get(job_id)
-        if job["status"] != "completed":
+        if job["status"] != "completed" and not (
+            job["kind"] == "ai" and (self._directory(job_id) / "diagnosis.json").is_file()
+        ):
             raise ValueError("analysis not completed")
         directory = self._directory(job_id)
         if job["kind"] != "rules":
@@ -310,6 +371,8 @@ class FileAnalysisBackend:
         report = json.loads((directory / "report.json").read_text())
         report["stale"] = self._stale(job)
         cases = [c for c in lines(directory / "cases.jsonl") if matches(c, filters)]
+        view = filtered_view(cases, report, filters, 1, 100)
+        report = {**report, **view["summary"], "issues": view["issues"], "all_items": report["item_count"]}
         return export_report(report, cases, format, filters)
 
     def result(self, job_id: str) -> dict[str, Any]:

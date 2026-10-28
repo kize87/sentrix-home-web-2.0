@@ -13,8 +13,29 @@ export interface AnalysisEvent {
   call_id?: string;
   diagnostics?: Record<string, unknown>;
   event_index?: number;
+  tool_name?: string;
+  component?: string;
+  issue_kind?: string;
+  failure_reason?: string;
+  tool_call_id?: string;
+  model_call_id?: string;
+  parent_step_id?: string;
+  call_key?: string;
+  evidence_refs?: {
+    kind: string;
+    turn: number;
+    index: number;
+    path?: string;
+    call_id?: string;
+    step_id?: string;
+  }[];
+  related_event_ids?: string[];
 }
 export interface AnalysisTurn {
+  question?: string;
+  answer?: string;
+  reference_answer?: string;
+  context_turn_count?: number;
   turn: number;
   turn_id?: string;
   termination_reason: string;
@@ -47,9 +68,16 @@ export interface AnalysisCase {
   missing: string[];
   signals: string[];
   text_truncated: boolean;
+  matched_event_ids?: string[];
+  matched_turns?: number[];
 }
 export interface BehaviorGroup {
-  value: string; total: number; valid: number; correct: number; incorrect: number; missing: number;
+  value: string;
+  total: number;
+  valid: number;
+  correct: number;
+  incorrect: number;
+  missing: number;
 }
 export interface AnalysisReport {
   schema_version: number;
@@ -107,6 +135,28 @@ export interface ComparisonReport {
   }[];
 }
 export interface DiagnosisReport {
+  schema_version?: number;
+  scope?: {
+    kind: string;
+    indices: number[];
+    filters: AnalysisFilters;
+    result_fingerprint: string;
+  };
+  coverage?: Record<string, number>;
+  issues?: IssueGroup[];
+  facts?: Record<string, unknown>;
+  overview?: { claims: AnalysisClaim[]; missing_evidence: string[] };
+  requests?: {
+    stage: string;
+    status: string;
+    duration_ms: number;
+    usage: Record<string, number> | null;
+  }[];
+  stage?: string;
+  summary_status?: string;
+  summary_error?: string;
+  prompt_version?: string;
+  sample_indices?: number[];
   requested: number;
   covered: number;
   model: string;
@@ -117,9 +167,10 @@ export interface DiagnosisReport {
     qa_id: string;
     valid: boolean;
     result: {
+      claims?: AnalysisClaim[];
       observations?: string;
       possible_causes?: string;
-      missing_evidence?: string;
+      missing_evidence?: string | string[];
       recommendations?: string;
       experiments?: string;
       evidence_refs?: string[];
@@ -149,3 +200,39 @@ export interface AnalysisPage {
 export type AnalysisFilters = Record<string, string>;
 export const activeAnalysis = (job: AnalysisJob<unknown> | null) =>
   !!job && ["queued", "running", "paused", "cancelling"].includes(job.status);
+
+export interface IssueGroup {
+  group_id: string;
+  component?: string;
+  tool_name: string;
+  code: string;
+  label: string;
+  failure_reason: string;
+  issue_kind: string;
+  affected_items: number;
+  affected_calls: number;
+  low_score_items: number;
+  indices: number[];
+  event_ids: string[];
+  events: number;
+  recovery: Record<string, number>;
+}
+export interface AnalysisView extends AnalysisPage {
+  summary: AnalysisReport;
+  issues: IssueGroup[];
+  tools: {
+    tool_name: string;
+    recorded_calls: number;
+    using_items: number;
+    affected_items: number;
+    affected_calls: number;
+  }[];
+  facets: Record<string, { value: string; count: number }[]>;
+  ability_tree: Record<string, string[]>;
+}
+export interface AnalysisClaim {
+  kind: "observation" | "hypothesis" | "recommendation";
+  text: string;
+  evidence_refs: string[];
+  limitations: string;
+}

@@ -25,7 +25,22 @@ class ErrorAnalysis:
 
     def create(self, run_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         kind = str(payload.get("kind") or "rules")
-        options = {k: payload[k] for k in ("parent_job", "left_job", "right_job", "indices") if k in payload}
+        options = {
+            k: payload[k]
+            for k in (
+                "parent_job",
+                "left_job",
+                "right_job",
+                "indices",
+                "scope",
+                "mode",
+                "filters",
+                "max_cases",
+                "resume_job",
+                "summary_only",
+            )
+            if k in payload
+        }
         if kind == "ai":
             provider = str(payload.get("provider_id") or "")
             if not provider or provider not in self.config.judge_providers:
