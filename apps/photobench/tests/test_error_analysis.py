@@ -395,8 +395,15 @@ def test_api_contract_pagination_cancel_and_legacy_source(tmp_path: Path):
         assert client.get("/api/v1/active-work").status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("judge_url", "thinking"),
+    [
+        ("http://judge/v1/chat/completions", {"enable_thinking": False}),
+        ("https://ark.cn-beijing.volces.com/api/plan/v3", {"thinking": {"type": "disabled"}}),
+    ],
+)
 def test_ai_requires_known_refs_provider_explicit_selection_and_never_sends_secret_to_disk(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, judge_url: str, thinking: dict[str, Any]
 ):
     import httpx
 
@@ -447,7 +454,7 @@ def test_ai_requires_known_refs_provider_explicit_selection_and_never_sends_secr
             threading.Event(),
             threading.Event(),
             {
-                "url": "http://judge/v1/chat/completions",
+                "url": judge_url,
                 "key": "secret-value",
                 "model": "J",
                 "provider_id": "test",
@@ -458,6 +465,7 @@ def test_ai_requires_known_refs_provider_explicit_selection_and_never_sends_secr
         assert result["covered"] == i
         assert "secret-value" not in (target / "job.json").read_text()
         assert "secret-value" not in (target / "diagnosis.json").read_text()
+    assert all(all(payload.get(key) == value for key, value in thinking.items()) for payload in targets)
     assert len(targets) == 2
     assert (p / "results.jsonl").read_bytes() == original
 

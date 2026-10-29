@@ -23,7 +23,7 @@ from photobench.domain.error_analysis.diagnosis import (
 )
 from photobench.domain.error_analysis.query import issue_groups
 from photobench.domain.error_analysis.rules import fingerprint
-from photobench.domain.runs.judge import judge_chat_url
+from photobench.domain.runs.judge import judge_chat_url, thinking_kwargs
 
 
 def run_ai(
@@ -52,6 +52,7 @@ def run_ai(
             "provider": secret["provider_id"],
             "temperature": 0,
             "max_tokens": 2048,
+            "thinking": thinking_kwargs(secret["url"]),
         }
     )
     previous: dict[str, Any] = {}
@@ -135,6 +136,7 @@ def run_ai(
                         "model": secret["model"],
                         "temperature": 0,
                         "max_tokens": 2048,
+                        **thinking_kwargs(secret["url"]),
                         "messages": [
                             {"role": "system", "content": prompt},
                             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},

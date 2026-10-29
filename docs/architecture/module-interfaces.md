@@ -660,6 +660,9 @@ T006 Judge一致性v2：新增可选`judge.consistency_version=2`，规则仍在
 
 Judge实时进度：`phases.qa_eval.progress`为规范计数，阶段外层同值兼容；Judge终态包含失败、跳过单列，有效评分数独立。Agent/Judge任一完成即由application提交同一检查点，不等全部Agent结束。前端缺失计数显示未知，不回写历史。详见指标契约的T006 Judge实时进度。
 
+AI辅助分析复用Judge的provider思考开关策略（豆包thinking.disabled，其余enable_thinking=false），
+请求策略计入配置指纹，策略变化后新建分析任务，原报告保留。
+
 重评分归档题目及逐轮原质量、行为和证据判分；当前Judge状态随新判分刷新。
 重评分仅覆盖回答质量和任务行为，证据统一标记not_applicable，原证据保留在history；
 原run终态及执行相位保持，错误分析新报告读取当前评分，历史报告仍可追溯。
