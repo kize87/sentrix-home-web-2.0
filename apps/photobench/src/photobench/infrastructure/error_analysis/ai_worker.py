@@ -19,6 +19,7 @@ from photobench.domain.error_analysis.diagnosis import (
     evidence_package,
     representative,
     scope_facts,
+    task_contract,
     terminal_facts,
     validate_claims,
 )
@@ -247,9 +248,18 @@ def run_ai(
                 "coverage": result["coverage"],
                 "groups": groups,
                 "terminal_outcomes": [],
+                "task_contracts": [],
                 "diagnoses": [],
             }
-            # Give final states their own references, before potentially conflicting AI diagnoses.
+            # Recorded expectations and outcomes take priority over potentially conflicting diagnoses.
+            contracts = [task_contract(c) for c in cases if c["index"] in {a["index"] for a in answers}]
+            for contract in contracts:
+                if (
+                    len(json.dumps(payload, ensure_ascii=False))
+                    + len(json.dumps(contract, ensure_ascii=False))
+                    < 42000
+                ):
+                    payload["task_contracts"].append(contract)
             outcomes = [terminal_facts(c) for c in cases if c["index"] in {a["index"] for a in answers}]
             for outcome in outcomes:
                 if (
@@ -268,11 +278,13 @@ def run_ai(
             payload["omitted_groups"] = len(result["issues"]) - len(groups)
             payload["omitted_diagnoses"] = len(diagnoses) - len(payload["diagnoses"])
             payload["omitted_terminal_outcomes"] = len(outcomes) - len(payload["terminal_outcomes"])
+            payload["omitted_task_contracts"] = len(contracts) - len(payload["task_contracts"])
             allowed = (
                 {"scope:statistics"}
                 | {g["group_id"] for g in groups}
                 | {d["id"] for d in payload["diagnoses"]}
                 | {o["id"] for o in payload["terminal_outcomes"]}
+                | {c["id"] for c in payload["task_contracts"]}
             )
             payload["allowed_evidence_refs"] = sorted(allowed)
             raw, error = request(client, OVERVIEW_PROMPT, payload, "overview")
