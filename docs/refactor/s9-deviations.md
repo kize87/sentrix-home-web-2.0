@@ -188,3 +188,7 @@ PhotoBench 是**第二个发行包**，另起 `scripts/export_photobench_openapi
 模型调用可选 json_output={required,attempted,json_object_valid}，只对明确要求 JSON 对象的调用采集；语法要求整个输出是对象，业务校验或宽容提取成功不能冒充严格解析成功。每次模型重试分别计数；传输无响应记 required，attempted=false，不算解析失败。QA 汇总 structured_json_* 包含规划、核验、工具内部和 Judge，按 call_id/步骤身份去重；旧 action JSON、native tool arguments 继续单列。旧结果无事实不补造。
 
 汇总读取已存null时重新使用逐调用事实计算TTFT、token速率及token分布；合法非空历史值保留。非流式模型诊断明确streamed=false，只算端到端token/s；所有调用均明确非流式时TTFT显示不适用，不虚构首token或纯解码速度。
+
+
+## 2026-10-29｜安全题二级能力统一
+能力字典新增 ability-2026.10.29-v3：抗幻觉H的二级为H1（抗幻觉），抗注入攻击I的二级为I1（抗注入攻击）。普通10类保持。v3安全题仅允许本组主标签、无支撑标签；澄清轮保留不适用。导入验证、分析分母、筛选、下钻、CSV/HTML和前端字典使用保存版本。v1/v2及历史run、报告不改写；v2安全题仍无二级。仅标签更新不改变题干、GT、证据和媒体；新数据包与兼容制品须一并使用，活动测评固定原输入。

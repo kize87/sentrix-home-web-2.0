@@ -273,7 +273,7 @@ def export_report(
         prefix = "turn" if unit == "轮" else "qa"
         for dimension, title, denominator in (
             ("ability_family", "一级能力", "ability_family" if report["rule_version"] >= 8 else "ability"),
-            ("ability_type", "普通二级能力", "ability"),
+            ("ability_type", "二级能力", "ability"),
         ):
             body += f"<h2>按得分看{title}（题或轮去重）</h2>"
             for score, label in SCORE_LABELS.items():
