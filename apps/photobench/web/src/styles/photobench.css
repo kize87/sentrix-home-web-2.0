@@ -1096,8 +1096,10 @@ details.qa-results-body[open] > summary::before { content:"▾ "; }
 .pipeline-timing-group > summary { cursor:pointer; font-size:12px; font-weight:600; }
 .pipeline-timing-group > .muted { margin:5px 0 8px; font-size:11px; }
 .pipeline-timing-table-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:7px; }
-.pipeline-timing-table { width:100%; min-width:400px; border-collapse:collapse; background:var(--surface); }
-.pipeline-timing-table th,.pipeline-timing-table td { padding:7px 8px; text-align:left; vertical-align:top; font-size:12px; }
+.pipeline-timing-table { width:100%; min-width:400px; table-layout:fixed; border-collapse:collapse; background:var(--surface); }
+.pipeline-timing-table th,.pipeline-timing-table td { padding:7px 8px; text-align:left; vertical-align:top; font-size:12px; white-space:normal; overflow-wrap:anywhere; }
+.pipeline-timing-table thead th:first-child { width:45%; }
+.pipeline-timing-table thead th:nth-child(2) { width:25%; }
 .pipeline-timing-table thead th { color:var(--muted); background:var(--surface2); font-size:11px; }
 .pipeline-timing-table tbody th { width:45%; font-weight:500; }
 .pipeline-timing-table .timing-value { width:25%; white-space:nowrap; }

@@ -551,3 +551,13 @@ it("取消后的partial遥测保持部分采集标记", () => {
     status: "partial", partial: true, samples_count: 10, collection_end_reason: "cancelled",
   } } })).toMatchObject({ status: "partial", partial: true, collection_end_reason: "cancelled" });
 });
+
+
+it("JSON对象与旧动作协议分列，非流式TTFT不冒充未记录或0", () => {
+  const rows = aggregateMetricRows({}, { structured_json_requested: 3, structured_json_total: 2,
+    structured_json_success: 0, structured_json_rate: 0, llm_call_metrics_count: 4, llm_nonstreamed_count: 4 });
+  expect(rows.find(row => row[0] === "JSON 对象解析率")?.[1]).toBe("0.0%");
+  expect(rows.find(row => row[0] === "JSON 对象解析率")?.[2]).toContain("0/2");
+  expect(rows.find(row => row[0] === "LLM TTFT 均值")?.[1]).toBe("不适用（非流式）");
+  expect(aggregateMetricRows({}, {}).find(row => row[0] === "JSON 对象解析率")?.[1]).toBe("未记录");
+});

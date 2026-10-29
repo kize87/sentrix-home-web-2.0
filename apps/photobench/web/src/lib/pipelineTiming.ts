@@ -72,7 +72,13 @@ export function pipelineTimingView(phase: Phase = {}, imported: Phase = {}): Pip
   const groups: PipelineTimingGroup[] = [];
   const rows = (definitions: Definition[], includeMissing = explicit): PipelineTimingRow[] =>
     definitions.filter(([key]) => includeMissing || timings[key] != null).map(([key, label, basis, description, nested]) => {
-      const duration = seconds(timings[key]);
+      const spanStage = key.startsWith("source_memory_") || key.startsWith("video_");
+      const duration = seconds(timings[spanStage ? key + "_wall" : key]);
+      const cumulative = spanStage ? seconds(timings[key]) : null;
+      if (spanStage) {
+        basis = "整段实际耗时";
+        if (cumulative !== null) description += ' 任务累计 ' + pipelineDuration(cumulative) + '（辅助统计）。';
+      }
       const comparable = !nested && basis === "整段实际耗时" && duration !== null && total !== null && total > 0 && duration <= total;
       return {
         key, label, value: duration === null && waiting ? "待回传" : pipelineDuration(duration),
@@ -103,16 +109,17 @@ export function pipelineTimingView(phase: Phase = {}, imported: Phase = {}): Pip
     const core = rows([["pipeline_core", "媒体处理与事件总结", "整段实际耗时", "包含下列处理步骤；并发推理与串行提交会重叠。"]])[0];
     groups.push({ key: "core", title: "媒体处理与事件总结",
       summary: core ? actualSummary(seconds(timings.pipeline_core)) : undefined,
-      note: "本段从开始处理媒体到事件总结结束，按实际经过时间计时。下表另列跨媒体累计耗时；媒体任务并行，累计值可大于本段实际时间，不用于计算占比。",
+      note: "本段从开始处理媒体到事件总结结束，按实际经过时间计时。子阶段按最早开始至最晚结束计时，包含期间等待，占比以后端总耗时为分母。子阶段可重叠，占比不可相加；历史未采集首尾时标为未记录。",
       rows: rows([
-        ["source_memory_prepare", "源媒体模型准备", "并行任务累计", "每张媒体的视觉向量、画面理解、人脸检测准备时间之和；多张媒体并行执行。"],
+        ["source_memory_prepare", "源媒体模型准备", "并行任务累计", "视觉向量、画面理解、人脸检测；多张媒体并行准备。"],
         ["source_memory_commit", "源媒体记忆提交", "串行累计", "地点、人脸归类、事件归属、文本向量、实体、事实与检索索引。"],
         ["video_total", "视频场景与关键帧处理", "串行累计", "含场景规划、抽帧、关键帧登记和记忆构建；细分见下表。"],
-        ["event_summarize", "事件总结", "批末实际耗时", "媒体处理结束后的事件摘要。"],
+        ["event_summarize", "事件总结", "整段实际耗时", "媒体处理结束后的事件摘要。"],
       ]),
     });
     groups.push({ key: "video", title: "视频处理细分（仅视频）", collapsed: true,
-      note: "这些时间包含在上面的「视频场景与关键帧处理」中。",
+      summary: actualSummary(seconds(timings.video_total_wall)),
+      note: "这些阶段包含在「视频场景与关键帧处理」中；跨视频、关键帧取最早开始至最晚结束，占比以后端总耗时为分母，各项不可相加。",
       rows: rows([
         ["video_scene_planning", "视频场景规划", "串行累计", "读取视频信息并确定场景时间窗。"],
         ["video_scene_write", "视频场景登记", "串行累计", "创建或复用场景事件。"],

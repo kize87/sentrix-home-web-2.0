@@ -210,7 +210,7 @@ it("显式阶段区分请求墙钟、后端总计和嵌套步骤，长耗时显�
   expect(pipeline?.textContent).toContain("实际总耗时 2分");
   expect(pipeline?.textContent).toContain("后端处理耗时 1分40秒");
   expect(pipeline?.textContent).toContain("1分10秒 · 占后端 70.0%");
-  expect(getByRole("table", { name: "媒体处理与事件总结", hidden: true }).textContent).toContain("3分20秒并行任务累计");
+  expect(getByRole("table", { name: "媒体处理与事件总结", hidden: true }).textContent).toContain("任务累计 3分20秒");
   expect(getByRole("table", { name: "图谱与人物收尾", hidden: true }).textContent).toContain("占后端 20.0%");
   expect(pipeline?.querySelector("details")?.open).toBe(false);
 });

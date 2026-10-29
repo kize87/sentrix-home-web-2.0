@@ -2677,8 +2677,9 @@ components:
           title: Trace
           description: Execution facts. model_calls optionally includes status, attempt,
             duration_ms and call_observation (kind/purpose/trigger/outcome/source/observation_version),
-            tool_argument_parse_facts (json_object_valid per native tool envelope);
-            plain-text completion is not a JSON parse attempt.
+            tool_argument_parse_facts (json_object_valid per native tool envelope),
+            json_output (required/attempted/json_object_valid for explicit JSON-object
+            output); plain-text completion is not a JSON parse attempt.
         error:
           type: string
           title: Error
@@ -5181,7 +5182,10 @@ components:
             type: number
           type: object
           title: Timings
-          default: {}
+          description: 'Stage seconds: *_wall is earliest start to latest end; *_start_seconds
+            and *_end_seconds are relative to pipeline start. Unsuffixed legacy task
+            totals remain cumulative; overlapping spans and their shares must not
+            be added.'
         failures:
           items:
             $ref: '#/components/schemas/ImportFailure'
