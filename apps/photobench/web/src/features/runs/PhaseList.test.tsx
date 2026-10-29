@@ -223,3 +223,19 @@ it("只有流水线成功终态才显示100%，无需等待QA结束", () => {
   expect(getByRole("progressbar", { name: "流水线整体进度" }).getAttribute("aria-valuenow")).toBe("100");
   expect(container.querySelectorAll(".pipeline-step.done")).toHaveLength(3);
 });
+
+
+it("导入首屏保留数量、失败和墙钟，登记细节折叠且终态不再多占一条进度栏", () => {
+  const { container } = render(<PhaseList activeRun={activeRun({photo_import: {
+    status: "done", execution_mode: "explicit", scanned_count: 14, accepted_count: 14,
+    deduplicated_count: 0, failed_count: 0, started_at: "2026-10-29T01:00:00Z",
+    finished_at: "2026-10-29T01:00:01.290Z", progress: { total: 14, processed: 14 }, timings: { asset_import: 0.1 },
+  }})} />);
+  const card = container.querySelectorAll(".phase-card")[3]!;
+  const summary = card.querySelector("details > summary")!;
+  expect(summary.textContent).toContain("媒体 14/14 · 失败 0 · 1.29s");
+  expect(summary.textContent).not.toContain("登记落库累计");
+  expect(card.querySelector("details")?.open).toBe(false);
+  expect(card.textContent).toContain("登记落库累计 0.1s");
+  expect(card.querySelector(".phase-bar")).toBeNull();
+});

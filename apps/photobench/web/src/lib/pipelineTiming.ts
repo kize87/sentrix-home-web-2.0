@@ -81,6 +81,13 @@ export function pipelineTimingView(phase: Phase = {}, imported: Phase = {}): Pip
       };
     });
 
+  const actualSummary = (duration: number | null): string => {
+    if (duration === null) return waiting ? "待回传" : "未记录";
+    const share = total !== null && total > 0 && duration <= total
+      ? duration > 0 && duration / total * 100 < 0.1 ? "<0.1%" : `${(duration / total * 100).toFixed(1)}%` : null;
+    return `实际经过 ${pipelineDuration(duration)}${share ? ` · 占后端 ${share}` : ""}`;
+  };
+
   if (explicit || Object.keys(timings).length || combined) {
     const elapsed = phaseElapsed(source);
     overview.push({ label: combined ? "历史合并请求耗时" : elapsed.label,
@@ -95,10 +102,10 @@ export function pipelineTimingView(phase: Phase = {}, imported: Phase = {}): Pip
     .some(key => timings[key] != null)) {
     const core = rows([["pipeline_core", "媒体处理与事件总结", "整段实际耗时", "包含下列处理步骤；并发推理与串行提交会重叠。"]])[0];
     groups.push({ key: "core", title: "媒体处理与事件总结",
-      summary: core ? `${core.value}${core.share ? ` · 占后端 ${core.share}` : ""}` : undefined,
-      note: "按已返回的资产计时累计；并行步骤会重叠，各项不能直接相加。",
+      summary: core ? actualSummary(seconds(timings.pipeline_core)) : undefined,
+      note: "本段从开始处理媒体到事件总结结束，按实际经过时间计时。下表另列跨媒体累计耗时；媒体任务并行，累计值可大于本段实际时间，不用于计算占比。",
       rows: rows([
-        ["source_memory_prepare", "源媒体模型准备", "并行任务累计", "视觉向量、画面理解、人脸检测；各任务耗时相加。"],
+        ["source_memory_prepare", "源媒体模型准备", "并行任务累计", "每张媒体的视觉向量、画面理解、人脸检测准备时间之和；多张媒体并行执行。"],
         ["source_memory_commit", "源媒体记忆提交", "串行累计", "地点、人脸归类、事件归属、文本向量、实体、事实与检索索引。"],
         ["video_total", "视频场景与关键帧处理", "串行累计", "含场景规划、抽帧、关键帧登记和记忆构建；细分见下表。"],
         ["event_summarize", "事件总结", "批末实际耗时", "媒体处理结束后的事件摘要。"],
@@ -114,7 +121,11 @@ export function pipelineTimingView(phase: Phase = {}, imported: Phase = {}): Pip
         ["video_keyframe_memory", "关键帧记忆构建", "串行累计", "关键帧的画面理解、文字、人脸、向量与记忆处理。"],
       ]),
     });
-    groups.push({ key: "finalize", title: "图谱与人物收尾", note: "核心处理结束后依次执行；因果边判定已包含在记忆图构建中。",
+    const finalizeParts = ["participant_projection", "memory_graph", "family_graph", "person_insights"].map(key => seconds(timings[key]));
+    const finalizeSeconds = finalizeParts.every(value => value !== null)
+      ? finalizeParts.reduce<number>((sum, value) => sum + (value as number), 0) : null;
+    groups.push({ key: "finalize", title: "图谱与人物收尾", summary: actualSummary(finalizeSeconds),
+      note: "核心处理结束后依次执行；汇总下方四个独立阶段的实际耗时，占比同样以后端处理耗时为分母。因果边判定已包含在记忆图构建中，不重复相加。",
       rows: rows([
         ["participant_projection", "参与者投影", "整段实际耗时", "将已确认人物关联到事件，并刷新参与者摘要。"],
         ["memory_graph", "记忆图构建", "整段实际耗时", "重建结构化记忆节点与关系，包含因果边判定。"],

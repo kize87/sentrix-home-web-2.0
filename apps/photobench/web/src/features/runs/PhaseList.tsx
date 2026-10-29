@@ -119,8 +119,11 @@ export function PhaseList({ activeRun }: PhaseListProps) {
                 </div>
                 <p className="pipeline-counts">{flow.detail}</p>
                 {flow.warning ? <p className="import-progress-warning">{flow.warning}</p> : null}
-              </div> : <p className="phase-summary">{phaseSummary(phaseDef.key, displayPhase, activeRun.item_count)}</p>}
-              {phaseDef.key === "photo_import" ? <p className="phase-scope-note">文件登记、去重、元数据读取与预览准备；处理明细见流水线。</p> : null}
+              </div> : phaseDef.key === "photo_import" ? <details className="phase-import-details">
+                <summary><span>{phaseSummary(phaseDef.key, displayPhase, activeRun.item_count, true)}</span><span className="phase-import-toggle">登记明细</span></summary>
+                <p>{phaseSummary(phaseDef.key, displayPhase, activeRun.item_count)}</p>
+                <p>文件登记、去重、元数据读取与预览准备；媒体处理见流水线。</p>
+              </details> : <p className="phase-summary">{phaseSummary(phaseDef.key, displayPhase, activeRun.item_count)}</p>}
               {errors.length > 0 ? (
                 <details className="phase-errors">
                   <summary>{phaseErrorSummary(phase)}</summary>
@@ -142,7 +145,7 @@ export function PhaseList({ activeRun }: PhaseListProps) {
                   {errors.length > 20 ? <p>仅展示前 20 条，完整记录已保存在 run.json。</p> : null}
                 </details>
               ) : null}
-              {phaseDef.key === "photo_import" && phase?.progress ? (
+              {phaseDef.key === "photo_import" && phase?.status === "running" && phase?.progress ? (
                 <div className="phase-bar">
                   <div className="phase-bar-fill" style={{ width: `${phasePercent(phase)}%` }} />
                 </div>

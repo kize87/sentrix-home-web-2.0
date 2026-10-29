@@ -214,7 +214,7 @@ export function judgeProgressLabel(phase: unknown): string {
   return `Judge 已结束 ${completed}/${total}${skipped}`;
 }
 
-export function phaseSummary(key: string, phase: unknown, itemCount: unknown = null): string {
+export function phaseSummary(key: string, phase: unknown, itemCount: unknown = null, compactImport = false): string {
   if (!phase) return "";
   const p = dict(phase);
   if (key === "model_deploy" && p.unload_seconds != null) {
@@ -232,30 +232,36 @@ export function phaseSummary(key: string, phase: unknown, itemCount: unknown = n
     const timings = dict(p.timings);
     const combined = isCombinedImport(p);
     const elapsed = phaseElapsed(p, p.total_seconds ?? p.upload_seconds);
-    const duration = combined
+    const duration = compactImport
+      ? combined ? " · 合并计时" : ` · ${pipelineDuration(elapsed.seconds)}`
+      : combined
       ? " · 登记与处理合并计时，详见流水线"
       : ` · ${elapsed.label} ${pipelineDuration(elapsed.seconds)}`;
     const registration = timings.asset_import ?? timings.stage;
-    const registrationText = typeof registration === "number" && Number.isFinite(registration) && registration >= 0
+    const registrationText = !compactImport && typeof registration === "number" && Number.isFinite(registration) && registration >= 0
       ? ` · 登记落库累计 ${pipelineDuration(registration)}` : "";
     // The synchronous import endpoint does not report media counts until it returns.
     // Keep that interval visibly unknown instead of presenting missing values as zero.
     const count = (value: unknown): string =>
       typeof value === "number" && Number.isInteger(value) && value >= 0 ? String(value) : "?";
     const observation = dict(dict(p.progress).observation);
+    const summary = (prefix: string, completed: unknown, total: unknown, added: unknown, deduplicated: unknown, failed: unknown) =>
+      compactImport ? `媒体 ${count(completed)}/${count(total)} · 失败 ${count(failed)}${duration}`
+        : `${prefix} ${count(completed)}/${count(total)} 个媒体 · 新增 ${count(added)} · 去重 ${count(deduplicated)} · 失败 ${count(failed)}${duration}${registrationText}`;
     if (p.status === "running" && Object.keys(observation).length) {
-      return `当前目录已处理 ${count(observation.completed)}/${count(observation.total)} 个媒体 · 新增 ${count(observation.imported)} · 去重 ${count(observation.deduplicated)} · 失败 ${count(observation.failed)}${duration}${registrationText}`;
+      return summary("当前目录已处理", observation.completed, observation.total, observation.imported, observation.deduplicated, observation.failed);
     }
     if (typeof p.scanned_count === "number") {
       const completed = typeof p.accepted_count === "number" && typeof p.deduplicated_count === "number" &&
         typeof p.failed_count === "number" ? p.accepted_count + p.deduplicated_count + p.failed_count : null;
       // Early explicit runs saved scanned_count as zero; their recorded outcomes give the actual total.
       const scanned = p.execution_mode === "explicit" ? completed : p.scanned_count;
-      return `已处理 ${count(completed)}/${count(scanned)} 个媒体 · 新增 ${count(p.accepted_count)} · 去重 ${count(p.deduplicated_count)} · 失败 ${count(p.failed_count)}${duration}${registrationText}`;
+      return summary("已处理", completed, scanned, p.accepted_count, p.deduplicated_count, p.failed_count);
     }
     const accepted = count(p.accepted_count);
     const totalMedia = count(p.total_media ?? p.total_photos);
     const failed = count(p.failed_count);
+    if (compactImport) return `媒体 ${accepted}/${totalMedia} · 失败 ${failed}${duration}`;
     return `导入 ${accepted}/${totalMedia} 个媒体 · 失败 ${failed}${duration}${registrationText}`;
   }
   if (key === "pipeline_processing" && p.progress) {

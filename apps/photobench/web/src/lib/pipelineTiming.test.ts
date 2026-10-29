@@ -12,12 +12,13 @@ describe("流水线计时口径", () => {
     const view = pipelineTimingView(phase);
     expect(phaseElapsed(phase).seconds).toBeCloseTo(703.519, 3);
     expect(view.overview.map(row => row.value)).toEqual(["11分43.5秒", "11分41.7秒"]);
-    expect(view.groups[0]?.summary).toBe("9分45.2秒 · 占后端 83.4%");
+    expect(view.groups[0]?.summary).toBe("实际经过 9分45.2秒 · 占后端 83.4%");
     const prepare = view.groups[0]!.rows.find(row => row.key === "source_memory_prepare")!;
     expect(prepare.value).toBe("12分48.6秒");
     expect(prepare.basis).toBe("并行任务累计");
     expect(prepare.share).toBeNull();
     const tail = view.groups.find(group => group.key === "finalize")!;
+    expect(tail.summary).toBe("实际经过 1分56.4秒 · 占后端 16.6%");
     expect(tail.rows.find(row => row.key === "person_insights")?.share).toBe("14.3%");
     expect(tail.rows.find(row => row.key === "causal_graph")).toMatchObject({ nested: true, share: null, value: "<1ms" });
     expect(JSON.stringify(phase)).toBe(snapshot);
@@ -78,4 +79,18 @@ describe("流水线计时口径", () => {
     expect(pipelineDuration(59.999)).toBe("60s");
     expect(pipelineDuration(3599.999)).toBe("1小时");
   });
+});
+
+
+it("收尾汇总只相加四个顺序执行段，缺项不补零，因果图不重复计入", () => {
+  const view = pipelineTimingView({ execution_mode: "explicit", status: "done", timings: {
+    total: 100, pipeline_core: 60, source_memory_prepare: 110,
+    participant_projection: 1, memory_graph: 9, causal_graph: 8, family_graph: 10, person_insights: 20,
+  } });
+  expect(view.groups.find(group => group.key === "finalize")?.summary).toBe("实际经过 40s · 占后端 40.0%");
+  expect(view.groups[0]?.summary).toBe("实际经过 1分 · 占后端 60.0%");
+  for (const status of ["done", "running"]) {
+    const missing = pipelineTimingView({ execution_mode: "explicit", status, timings: { total: 100, person_insights: 20 } });
+    expect(missing.groups.find(group => group.key === "finalize")?.summary).toBe(status === "running" ? "待回传" : "未记录");
+  }
 });
