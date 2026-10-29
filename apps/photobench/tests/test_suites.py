@@ -505,6 +505,38 @@ def test_rejudge_archives_the_old_score_and_writes_a_new_one(tmp_path: Path, mon
     assert item["runtime_turns"][0]["task_judge"]["actual_action"] == "answer"
 
 
+@pytest.mark.parametrize("with_turns", [True, False])
+def test_rejudge_replaces_failed_status_without_reusing_old_evidence(tmp_path, with_turns):
+    from copy import deepcopy
+
+    from photobench.domain.error_analysis.rules import case_from_item
+
+    state = _judged_state()
+    state["status"] = "completed_with_errors"
+    item = state["items"][0]
+    if not with_turns:
+        item.pop("runtime_turns")
+    failed = {"score": None, "judge_status": "failed", "reason": "judge_error: HTTP 401"}
+    for record in [item, *(item.get("runtime_turns") or [])]:
+        record.update(judge=deepcopy(failed), evidence_judge=deepcopy(failed), judge_status="failed")
+    http = FakeHttpClient(
+        [
+            judge_reply('{"score":2,"reason":"正确"}'),
+            judge_reply('{"actual_action":"answer","reason":"直接回答"}'),
+        ]
+    )
+    suites = _suites(tmp_path, store=FakeRunStore({"run-1": state}), http=http)
+    suites.start_rejudge("run-1", {"system_prompt": "评分"})
+    assert _wait_until(lambda: state["rejudge"]["status"] == "completed")
+    assert item["judge_status"] == "completed"
+    assert item["evidence_judge_history"][0]["evidence_judge"] == failed
+    for record in [item, *(item.get("runtime_turns") or [])]:
+        assert record["evidence_judge"]["reason"] == "not_applicable"
+    assert not any(event["component"] == "judge" for event in case_from_item(item, 0)["events"])
+    assert state["status"] == "completed_with_errors"
+    assert item["judge_history"][0]["judge"] == failed
+
+
 def test_rejudge_refuses_while_the_run_is_active(tmp_path: Path):
     store = FakeRunStore({"run-1": {**_judged_state(), "status": "running"}})
     suites = _suites(tmp_path, store=store)

@@ -830,23 +830,23 @@ class RunSuites:
             }
             for index in sorted({item_index for item_index, _ in targets}):
                 item = state["items"][index]
-                prior = item.get("judge")
-                if prior:
-                    item.setdefault("judge_history", []).append({"archived_at": now_iso(), "judge": prior})
-                item["judge"] = {"score": None, "reason": "", "status": "pending", "rejudge_id": rejudge_id}
-                for turn in item.get("runtime_turns") or []:
+                item["judge_status"] = "pending"
+                for record in [item, *(item.get("runtime_turns") or [])]:
                     for field in ("judge", "task_judge", "evidence_judge"):
-                        prior_turn = turn.get(field)
-                        if prior_turn:
-                            turn.setdefault(f"{field}_history", []).append(
-                                {"archived_at": now_iso(), field: prior_turn}
+                        prior = record.get(field)
+                        if prior:
+                            record.setdefault(f"{field}_history", []).append(
+                                {"archived_at": now_iso(), field: prior}
                             )
-                    turn["judge"] = {
+                    record["judge"] = {
                         "score": None,
                         "reason": "",
                         "status": "pending",
                         "rejudge_id": rejudge_id,
                     }
+                    record["task_judge"] = {"status": "pending", "rejudge_id": rejudge_id}
+                    record["evidence_judge"] = {"score": None, "reason": "not_applicable"}
+                item["task_judges"] = [turn["task_judge"] for turn in item.get("runtime_turns") or []]
             state["summary"] = analysis.effective_summary(state)
             self._writer.write_snapshot(run_id, state)
             cancel_event = threading.Event()
@@ -1039,6 +1039,18 @@ class RunSuites:
                         else:
                             item["judge"] = record.get("judge") or {}
                             item["task_judge"] = record.get("task_judge") or {}
+                        # Current scoring state follows every judged turn; execution history stays unchanged.
+                        records = turns or [item]
+                        qualities = [entry.get("judge") or {} for entry in records]
+                        tasks = [entry.get("task_judge") or {} for entry in records]
+                        item["judge_status"] = (
+                            "pending"
+                            if any(value.get("status") == "pending" for value in qualities)
+                            else "failed"
+                            if any(value.get("status") == "failed" for value in qualities)
+                            or any(value.get("judge_status") == "failed" for value in tasks)
+                            else "completed"
+                        )
                         current["rejudge"]["completed"] = completed
                         if judge_result.get("score") not in {0, 1, 2}:
                             current["rejudge"]["failed"] += 1
@@ -1059,6 +1071,7 @@ class RunSuites:
                                     current_judge.get("rejudge_id") == rejudge_id
                                     and current_judge.get("status") == "pending"
                                 ):
+                                    item["judge_status"] = "cancelled"
                                     current_judge.update(
                                         status="cancelled",
                                         reason="rejudge cancelled before scoring completed",
@@ -1095,6 +1108,7 @@ class RunSuites:
                     for record in [item, *(item.get("runtime_turns") or [])]:
                         if (record.get("judge") or {}).get("rejudge_id") == rejudge_id:
                             record["judge"].update(status="failed", score=None, reason="worker_start_failed")
+                            item["judge_status"] = "failed"
                 state["summary"] = analysis.effective_summary(state)
                 self._writer.write_snapshot(run_id, state)
                 raise
