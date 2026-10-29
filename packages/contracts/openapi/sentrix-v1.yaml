@@ -2506,6 +2506,31 @@ components:
       - asset_id
       - file_name
       title: AttachmentSummary
+    AudioEvidenceExcerpt:
+      properties:
+        start_ms:
+          type: integer
+          title: Start Ms
+        end_ms:
+          type: integer
+          title: End Ms
+        text:
+          type: string
+          title: Text
+        is_anchor:
+          type: boolean
+          title: Is Anchor
+          default: false
+        speaker_label:
+          type: string
+          title: Speaker Label
+          default: ''
+      type: object
+      required:
+      - start_ms
+      - end_ms
+      - text
+      title: AudioEvidenceExcerpt
     AudioTranscriptSegmentResponse:
       properties:
         id:
@@ -2547,7 +2572,6 @@ components:
         local_speaker_label:
           type: string
           title: Local Speaker Label
-          description: CAM++ 在当前媒体内生成的匿名说话人标签；不表示跨媒体稳定身份。
         speaker_confidence:
           anyOf:
           - type: number
@@ -5923,6 +5947,12 @@ components:
           - type: integer
           - type: 'null'
           title: Audio End Ms
+        audio_context:
+          items:
+            $ref: '#/components/schemas/AudioEvidenceExcerpt'
+          type: array
+          title: Audio Context
+          default: []
       type: object
       required:
       - asset

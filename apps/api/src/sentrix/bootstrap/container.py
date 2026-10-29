@@ -84,7 +84,7 @@ from sentrix.infrastructure.assistant.chat_client import OpenAIChatModel
 from sentrix.infrastructure.assistant.events import InProcessTurnEventBroker
 from sentrix.infrastructure.assistant.model_endpoint import ServedModel, probe_context_tokens
 from sentrix.infrastructure.build import read_build_revision
-from sentrix.infrastructure.media.asr_sidecar import FunAsrSidecarTranscriber
+from sentrix.infrastructure.media.asr_sidecar import AsrSidecarTranscriber
 from sentrix.infrastructure.media.audio_metadata import FfprobeAudioMetadataReader
 from sentrix.infrastructure.media.image_io import PillowPreviewEncoder
 from sentrix.infrastructure.media.import_progress import InProcessImportProgressStore
@@ -359,7 +359,7 @@ class Container:
             video_repository=SqliteVideoRepository(database),
             audio_metadata_reader=FfprobeAudioMetadataReader(),
             audio_repository=SqliteAudioRepository(database),
-            audio_transcriber=FunAsrSidecarTranscriber(settings.asr_url, timeout_s=settings.asr_timeout_s),
+            audio_transcriber=AsrSidecarTranscriber(settings.asr_url, timeout_s=settings.asr_timeout_s),
             audio_transcription_repository=SqliteAudioTranscriptionRepository(database),
             vector_repository=SqliteVectorRepository(database),
             vector_index=QdrantVectorIndex(settings.qdrant_dir),
