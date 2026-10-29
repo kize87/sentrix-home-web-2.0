@@ -49,7 +49,7 @@ from photobench.domain.runtime.metrics import (
 # 1.0 ``:933`` / ``:1261``。
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
 RANKING_KS = (1, 5, 10)
-JUDGE_CONSISTENCY_VERSION = 3
+JUDGE_CONSISTENCY_VERSION = 4
 
 
 def now_iso() -> str:
@@ -83,9 +83,16 @@ def judge_score_consistency(
         # the start of a clause. Reference narration is not praise of the model.
         subject = r"(?:模型|助手)(?:的)?(?:回答|答案|结论)"
         clause_subject = r"^\s*(?:(?:该|此|最终)(?:次)?)?(?:回答|答案|结论)"
+        # A nearby reference to the correct answer is not an assertion that
+        # the tested answer is correct. Match an answer-level predicate.
+        praise = (
+            r"(?:内容|中的核心信息|的核心信息)?\s*"
+            r"(?:(?:是|为|基本上?|完全|总体上?|整体上?|均|都|确实|非常)\s*){0,3}"
+            r"(?:正确|准确)"
+        )
         assertions = (
-            rf"{subject}.{{0,12}}(?:正确|准确)",
-            rf"{clause_subject}.{{0,12}}(?:正确|准确)",
+            rf"{subject}{praise}" if version >= 4 else rf"{subject}.{{0,12}}(?:正确|准确)",
+            rf"{clause_subject}{praise}" if version >= 4 else rf"{clause_subject}.{{0,12}}(?:正确|准确)",
             rf"(?:{subject}|{clause_subject}).{{0,12}}与.{{0,12}}(?:参考答案|标准答案).{{0,8}}一致",
             rf"(?:{subject}|{clause_subject}).{{0,8}}符合.{{0,8}}预期",
             r"^\s*与.{0,12}(?:参考答案|标准答案).{0,8}一致",
@@ -153,7 +160,11 @@ def judge_consistency_status(judge: dict[str, Any] | None) -> str | None:
     judge = judge_projection(judge)
     recorded_version = judge.get("consistency_version")
     version = JUDGE_CONSISTENCY_VERSION if judge.get("score_derivation") else 1
-    if not judge.get("score_derivation") and isinstance(recorded_version, int) and recorded_version in (2, 3):
+    if (
+        not judge.get("score_derivation")
+        and isinstance(recorded_version, int)
+        and recorded_version in (2, 3, 4)
+    ):
         version = recorded_version
     if not judge_score_consistency(judge.get("score"), str(judge.get("reason") or ""), version=version):
         return "inconsistent"
