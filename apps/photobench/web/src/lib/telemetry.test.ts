@@ -409,7 +409,7 @@ describe("aggregateMetricRows (:1212-1253) / keyMetricRows (:1254-1304)", () => 
     const recall = rows.find((row) => row.label === "工具图片召回率");
     expect(recall?.value).toBe("未计算");
     expect(recall?.note).toContain("不补零");
-    const gpuRow = rows.find((row) => row.label === "模型进程显存");
+    const gpuRow = rows.find((row) => row.label === "主模型显存占用");
     expect(gpuRow?.value).toBe("-"); // fmtMemory(undefined)
   });
 });
