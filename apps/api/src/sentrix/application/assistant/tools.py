@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from sentrix.application.assistant.query_memory_facts import QueryMemoryFacts
+from sentrix.application.documents.search_documents import SearchDocuments, SearchDocumentsRequest
 from sentrix.application.retrieval.retrieve_evidence import EvidenceRequest, RetrieveEvidence
 from sentrix.application.retrieval.retrieve_graph import graph_direction, graph_intent
 from sentrix.domain.assistant.evidence_binding import fact_value_type
@@ -62,6 +63,8 @@ DEFAULT_INSPECT_QUESTION = "请描述这张照片"
 
 DEFAULT_SEARCH_LIMIT = 6
 MAX_SEARCH_LIMIT = 6
+_DOCUMENT_TEXT_LIMIT = 1800
+_DOCUMENT_CONTEXT_LIMIT = 1000
 
 # 复合摘要的三个上限，逐条取自 1.0 ``agent_runtime/tools.py:371-414`` 的
 # ``_observation_summary``（单段文字 120 字、整串 300 字、列表取前 8 项）。
@@ -170,6 +173,14 @@ def _clamp_limit(value: Any) -> int:
     return min(MAX_SEARCH_LIMIT, max(1, parsed))
 
 
+def _document_page_label(start: int | None, end: int | None) -> str:
+    if start is None:
+        return ""
+    if end is None or end == start:
+        return str(start)
+    return f"{start}-{end}"
+
+
 class AssistantToolbox:
     def __init__(
         self,
@@ -184,6 +195,7 @@ class AssistantToolbox:
         photo_inspector: PhotoInspector,
         person_crops: PersonCropRenderer,
         asset_places: AssetPlaceRepository | None = None,
+        documents: SearchDocuments | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._assets = assets
@@ -201,6 +213,9 @@ class AssistantToolbox:
         # 头肩裁剪件。裁剪走端口而不是在这里 import PIL——domain-purity 把 PIL 点名禁了。
         self._photo_inspector = photo_inspector
         self._crops = person_crops
+        # 文档有独立的解析、分块、FTS 与向量链路；这里只把其只读检索能力接进助手，
+        # 不复用照片 Observation / ResultSetEntry，避免两种模态的数据结构混在一起。
+        self._documents = documents
 
     def execute(
         self,
@@ -213,6 +228,8 @@ class AssistantToolbox:
     ) -> ToolOutcome:
         if name == "search_memories":
             return self._search(arguments, scope_id=scope_id, now=now)
+        if name == "search_documents":
+            return self._search_documents(arguments, scope_id=scope_id, now=now)
         if name == "get_result_page":
             return self._page(arguments, scope_id=scope_id)
         if name == "query_photo_people":
@@ -226,6 +243,86 @@ class AssistantToolbox:
         if name == "query_memory_facts":
             return self._facts(arguments, scope_id=scope_id, now=now)
         return _failure("unknown_tool", f"没有名为 {name} 的工具。")
+
+    # ---- search_documents --------------------------------------------------
+
+    def _search_documents(
+        self,
+        arguments: Mapping[str, Any],
+        *,
+        scope_id: str,
+        now: datetime,
+    ) -> ToolOutcome:
+        query = str(arguments.get("query") or "").strip()
+        if not query:
+            return _failure("empty_query", "query 不能为空，请填写要在文档中查找的问题或关键短语。")
+        if self._documents is None:
+            return _failure("document_search_unavailable", "文档检索当前没有配置。")
+
+        hits = self._documents.execute(
+            SearchDocumentsRequest(
+                text=query,
+                scope_id=scope_id,
+                limit=_clamp_limit(arguments.get("limit")),
+                context_radius=1,
+            )
+        )
+
+        # TaskState 通过 result_set_id 判断检索入口已经打开。文档不使用照片 handle，
+        # 因此保存一个空的结果集哨兵：它只服务回合状态和最终门禁，不承载文档正文。
+        result_set = ResultSet(
+            id=f"rs_{uuid.uuid4().hex[:12]}",
+            scope_id=scope_id,
+            query=query,
+            asset_ids=(),
+            created_at=now,
+        )
+        self._result_sets.add(result_set)
+
+        documents: list[dict[str, Any]] = []
+        for index, hit in enumerate(hits, 1):
+            page_label = _document_page_label(hit.page_start, hit.page_end)
+            neighbors = [
+                {
+                    "page": _document_page_label(chunk.page_start, chunk.page_end),
+                    "text": chunk.text[:_DOCUMENT_CONTEXT_LIMIT],
+                }
+                for chunk in hit.context
+                if chunk.id != hit.chunk_id and chunk.text.strip()
+            ]
+            documents.append(
+                {
+                    "reference": f"document_{index}",
+                    "file_name": hit.file_name,
+                    "page": page_label,
+                    "section": hit.section_path,
+                    "text": hit.text[:_DOCUMENT_TEXT_LIMIT],
+                    "context": neighbors,
+                }
+            )
+
+        return ToolOutcome(
+            observation={
+                "result_set_id": result_set.id,
+                "query": query,
+                "total": len(hits),
+                "has_more": False,
+                "asset_ids": [],
+                "document_asset_ids": [hit.document_asset_id for hit in hits],
+                "chunk_ids": [hit.chunk_id for hit in hits],
+                "source_locators": [hit.source_locator for hit in hits],
+            },
+            model_visible={
+                "query": query,
+                "total": len(hits),
+                "has_more": False,
+                "documents": documents,
+                "instruction": (
+                    "只根据这些文档原文回答；标注来源时写文件名和页码。"
+                    "若片段不足以确认答案，请明确说明证据不足。"
+                ),
+            },
+        )
 
     # ---- query_memory_facts -------------------------------------------------
 

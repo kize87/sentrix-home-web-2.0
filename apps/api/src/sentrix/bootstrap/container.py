@@ -26,6 +26,7 @@ from sentrix.domain.assistant.ports import (
     TurnEventBroker,
     TurnRepository,
 )
+from sentrix.domain.documents.ports import DocumentParser, DocumentRepository
 from sentrix.domain.identity.ports import (
     AppearanceRepository,
     EntityRepository,
@@ -84,6 +85,7 @@ from sentrix.infrastructure.assistant.chat_client import OpenAIChatModel
 from sentrix.infrastructure.assistant.events import InProcessTurnEventBroker
 from sentrix.infrastructure.assistant.model_endpoint import ServedModel, probe_context_tokens
 from sentrix.infrastructure.build import read_build_revision
+from sentrix.infrastructure.documents.parsers import DeterministicDocumentParser
 from sentrix.infrastructure.media.asr_sidecar import AsrSidecarTranscriber
 from sentrix.infrastructure.media.audio_metadata import FfprobeAudioMetadataReader
 from sentrix.infrastructure.media.image_io import PillowPreviewEncoder
@@ -125,6 +127,7 @@ from sentrix.infrastructure.persistence.repositories.audio_transcriptions import
 from sentrix.infrastructure.persistence.repositories.conversations import (
     SqliteConversationRepository,
 )
+from sentrix.infrastructure.persistence.repositories.documents import SqliteDocumentRepository
 from sentrix.infrastructure.persistence.repositories.entities import SqliteEntityRepository
 from sentrix.infrastructure.persistence.repositories.events import SqliteEventRepository
 from sentrix.infrastructure.persistence.repositories.faces import SqliteFaceRepository
@@ -178,6 +181,8 @@ class Container:
     import_progress: ImportProgressStore
     asset_repository: AssetRepository
     observation_repository: ObservationRepository
+    document_repository: DocumentRepository
+    document_parser: DocumentParser
     media_storage: MediaStorage
     metadata_reader: MetadataReader
     preview_encoder: PreviewEncoder
@@ -358,6 +363,8 @@ class Container:
             spaces=SqliteSpaceRepository(database),
             asset_repository=assets,
             observation_repository=observations,
+            document_repository=SqliteDocumentRepository(database),
+            document_parser=DeterministicDocumentParser(),
             media_storage=FileSystemMediaStorage(settings.media_dir),
             metadata_reader=PillowMetadataReader(),
             preview_encoder=PillowPreviewEncoder(),

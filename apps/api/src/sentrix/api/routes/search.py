@@ -13,6 +13,7 @@ from sentrix.api.schemas.search import AudioEvidenceExcerpt as AudioEvidenceExce
 from sentrix.api.schemas.search import ChannelTrace, SearchHit, SearchResponse
 from sentrix.application.retrieval.evaluate_conditions import EvaluateConditions
 from sentrix.application.retrieval.expand_audio_context import ExpandAudioContext
+from sentrix.application.retrieval.retrieve_audio_segments import RetrieveAudioSegments
 from sentrix.application.retrieval.retrieve_entity import RetrieveEntity
 from sentrix.application.retrieval.retrieve_evidence import EvidenceRequest, RetrieveEvidence
 from sentrix.application.retrieval.retrieve_graph import RetrieveGraph
@@ -66,6 +67,9 @@ def build_retrieve_evidence(container: Container) -> RetrieveEvidence:
         ),
         graph=RetrieveGraph(graph=container.memory_graph),
         audio_context=ExpandAudioContext(container.audio_transcription_repository),
+        audio_segments=RetrieveAudioSegments(
+            embedder=container.text_embedder, vectors=container.vector_repository
+        ),
     )
 
 
@@ -201,4 +205,19 @@ def search_assets(
             for trace in result.channel_trace
         ],
         items=items,
+        direct_audio=[
+            {
+                "segment_id": item.segment_id,
+                "asset_id": item.asset_id,
+                "score": item.score,
+                "start_ms": item.start_ms,
+                "end_ms": item.end_ms,
+                "context": [
+                    {"start_ms": part.start_ms, "end_ms": part.end_ms, "text": part.text,
+                     "is_anchor": part.is_anchor, "speaker_label": part.local_speaker_label}
+                    for part in item.context
+                ],
+            }
+            for item in result.direct_audio
+        ],
     )

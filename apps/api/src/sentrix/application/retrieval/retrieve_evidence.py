@@ -41,6 +41,10 @@ from datetime import datetime
 
 from sentrix.application.retrieval.evaluate_conditions import EvaluateConditions
 from sentrix.application.retrieval.expand_audio_context import ExpandAudioContext
+from sentrix.application.retrieval.retrieve_audio_segments import (
+    AudioSegmentSearchRequest,
+    RetrieveAudioSegments,
+)
 from sentrix.application.retrieval.retrieve_entity import RetrieveEntity
 from sentrix.application.retrieval.retrieve_graph import GRAPH_CHANNEL, RetrieveGraph
 from sentrix.application.retrieval.retrieve_lexical import RetrieveLexical
@@ -131,6 +135,18 @@ class EvidenceHit:
 
 
 @dataclass(frozen=True, slots=True)
+class DirectAudioEvidence:
+    """Segment-level audio evidence, kept separate from Asset fusion."""
+
+    segment_id: str
+    asset_id: str
+    score: float
+    start_ms: int
+    end_ms: int
+    context: tuple[AudioEvidenceExcerpt, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceResult:
     """融合结果 + 视觉通道报出来的后端健康度。
 
@@ -156,6 +172,7 @@ class EvidenceResult:
     primary_asset_ids: Sequence[str] = field(default_factory=tuple)
     graph_asset_ids: Sequence[str] = field(default_factory=tuple)
     fused_asset_ids: Sequence[str] = field(default_factory=tuple)
+    direct_audio: Sequence[DirectAudioEvidence] = field(default_factory=tuple)
 
 
 def _visual_candidates_health(
@@ -223,6 +240,7 @@ class RetrieveEvidence:
         conditions: EvaluateConditions | None = None,
         graph: RetrieveGraph | None = None,
         audio_context: ExpandAudioContext | None = None,
+        audio_segments: RetrieveAudioSegments | None = None,
         max_audio_context_hits: int = 2,
     ) -> None:
         self._visual = visual
@@ -233,6 +251,7 @@ class RetrieveEvidence:
         self._conditions = conditions
         self._graph = graph
         self._audio_context = audio_context
+        self._audio_segments = audio_segments
         self._max_audio_context_hits = max(0, max_audio_context_hits)
 
     def execute(self, request: EvidenceRequest) -> EvidenceResult:
@@ -372,6 +391,33 @@ class RetrieveEvidence:
         # 「图加入前实际交付头部」的含义。
         primary_fused = fuse(channel_hits, channel_weights=primary_weights)
 
+        direct_audio: list[DirectAudioEvidence] = []
+        if self._audio_segments is not None:
+            try:
+                segment_result = self._audio_segments.execute(
+                    AudioSegmentSearchRequest(text=text, scope_id=request.scope_id, limit=5)
+                )
+                for segment in segment_result.hits:
+                    context: tuple[AudioEvidenceExcerpt, ...] = ()
+                    if self._audio_context is not None:
+                        context = self._audio_context.execute(
+                            asset_id=segment.asset_id,
+                            anchor_start_ms=segment.start_ms,
+                            anchor_end_ms=segment.end_ms,
+                        )
+                    direct_audio.append(
+                        DirectAudioEvidence(
+                            segment.segment_id,
+                            segment.asset_id,
+                            segment.score,
+                            segment.start_ms,
+                            segment.end_ms,
+                            context,
+                        )
+                    )
+            except Exception as error:  # direct audio is an additive evidence path
+                log.warning("Segment 级音频召回失败，本次继续原有检索: %s", error)
+
         # 图是由 primary 结果提供种子的 expander，不参与前面的并行召回。
         # 这样即使图尚未构建，原有五路检索仍然完整返回；图本身的降级会单独出现在
         # channel_trace，而不是伪装成「没有相关结果」。
@@ -509,4 +555,5 @@ class RetrieveEvidence:
             primary_asset_ids=primary_asset_ids,
             graph_asset_ids=graph_asset_ids,
             fused_asset_ids=fused_asset_ids,
+            direct_audio=tuple(direct_audio),
         )

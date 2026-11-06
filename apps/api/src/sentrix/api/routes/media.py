@@ -19,7 +19,7 @@ from sentrix.api.schemas.media import (
 )
 from sentrix.application.identity.enroll_face import EnrollFace, EnrollFaces
 from sentrix.application.media.extract_video_scenes import ExtractVideoScenes, VideoSceneExtraction
-from sentrix.application.media.import_assets import ImportAssets, ImportRequest
+from sentrix.application.media.import_assets import ImportAssets, ImportRequest, ImportResult
 from sentrix.application.media.index_place import IndexAssetPlace
 from sentrix.application.media.maintain_entities import MaintainObservationEntities
 from sentrix.application.media.observe_asset import ObserveAsset
@@ -44,6 +44,23 @@ log = logging.getLogger("sentrix.api.media")
 
 PREVIEW_MAX_DIMENSION = 1600
 PREVIEW_QUALITY = 85
+
+
+def to_import_response(result: ImportResult) -> ImportResponse:
+    return ImportResponse(
+        asset_id=result.asset_id,
+        observation_id=result.observation_id,
+        media_type=result.media_type.value,
+        status=result.status.value,
+        deduplicated=result.deduplicated,
+        indexed=result.indexed,
+        placed=result.placed,
+        event_id=result.event_id,
+        video_probed=result.video_probed,
+        video_scenes=result.video_scenes,
+        audio_probed=result.audio_probed,
+        audio_transcription_status=result.audio_transcription_status,
+    )
 
 
 def to_summary(asset: Asset) -> AssetSummary:
@@ -74,6 +91,12 @@ async def import_media(
     scope_id: str = Form("home-default"),
     container: Container = Depends(get_container),
 ) -> ImportResponse:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix in {".txt", ".doc", ".docx", ".pdf"}:
+        raise HTTPException(
+            status_code=400,
+            detail="文档必须使用 /api/v1/documents/import，不能进入图片/音频记忆链路",
+        )
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="empty file")
@@ -88,20 +111,7 @@ async def import_media(
         )
     )
     refresh_memory_graph(container, scope_id)
-    return ImportResponse(
-        asset_id=result.asset_id,
-        observation_id=result.observation_id,
-        media_type=result.media_type.value,
-        status=result.status.value,
-        deduplicated=result.deduplicated,
-        indexed=result.indexed,
-        placed=result.placed,
-        event_id=result.event_id,
-        video_probed=result.video_probed,
-        video_scenes=result.video_scenes,
-        audio_probed=result.audio_probed,
-        audio_transcription_status=result.audio_transcription_status,
-    )
+    return to_import_response(result)
 
 
 def build_memory_graph(container: Container) -> BuildMemoryGraph:

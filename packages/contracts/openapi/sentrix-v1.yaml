@@ -77,6 +77,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DiagnosticsResponse'
+  /api/v1/import:
+    post:
+      tags:
+      - imports
+      summary: Import File
+      operationId: import_file_api_v1_import_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_import_file_api_v1_import_post'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnifiedImportResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v1/media/import:
     post:
       tags:
@@ -281,6 +306,84 @@ paths:
           content:
             application/json:
               schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/documents/import:
+    post:
+      tags:
+      - documents
+      summary: Import Document
+      operationId: import_document_api_v1_documents_import_post
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_import_document_api_v1_documents_import_post'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentImportResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/documents/search:
+    get:
+      tags:
+      - documents
+      summary: Search Documents
+      operationId: search_documents_api_v1_documents_search_get
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 500
+          title: Q
+      - name: scope_id
+        in: query
+        required: false
+        schema:
+          type: string
+          default: home-default
+          title: Scope Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 50
+          minimum: 1
+          default: 10
+          title: Limit
+      - name: context_radius
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 2
+          minimum: 0
+          default: 1
+          title: Context Radius
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentSearchResponse'
         '422':
           description: Validation Error
           content:
@@ -2749,6 +2852,34 @@ components:
         1.0 就是这个形状（``app.py:2226`` 的 ``confirmed`` / ``failed`` / ``count``），
 
         理由是批量确认的输入来自用户逐个点选，一件失败就把整批回滚会丢掉其余选择。'
+    Body_import_document_api_v1_documents_import_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+        scope_id:
+          type: string
+          title: Scope Id
+          default: home-default
+      type: object
+      required:
+      - file
+      title: Body_import_document_api_v1_documents_import_post
+    Body_import_file_api_v1_import_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+        scope_id:
+          type: string
+          title: Scope Id
+          default: home-default
+      type: object
+      required:
+      - file
+      title: Body_import_file_api_v1_import_post
     Body_import_media_api_v1_media_import_post:
       properties:
         file:
@@ -3044,6 +3175,144 @@ components:
       - asr
       - runtime_configuration
       title: DiagnosticsResponse
+    DocumentContextChunk:
+      properties:
+        chunk_id:
+          type: string
+          title: Chunk Id
+        ordinal:
+          type: integer
+          title: Ordinal
+        text:
+          type: string
+          title: Text
+        page_start:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Page Start
+        page_end:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Page End
+      type: object
+      required:
+      - chunk_id
+      - ordinal
+      - text
+      title: DocumentContextChunk
+    DocumentImportResponse:
+      properties:
+        asset_id:
+          type: string
+          title: Asset Id
+        deduplicated:
+          type: boolean
+          title: Deduplicated
+        status:
+          type: string
+          title: Status
+        format:
+          type: string
+          title: Format
+        revision:
+          type: integer
+          title: Revision
+        element_count:
+          type: integer
+          title: Element Count
+        chunk_count:
+          type: integer
+          title: Chunk Count
+        vector_count:
+          type: integer
+          title: Vector Count
+        error:
+          type: string
+          title: Error
+          default: ''
+      type: object
+      required:
+      - asset_id
+      - deduplicated
+      - status
+      - format
+      - revision
+      - element_count
+      - chunk_count
+      - vector_count
+      title: DocumentImportResponse
+    DocumentSearchItem:
+      properties:
+        document_asset_id:
+          type: string
+          title: Document Asset Id
+        chunk_id:
+          type: string
+          title: Chunk Id
+        file_name:
+          type: string
+          title: File Name
+        text:
+          type: string
+          title: Text
+        score:
+          type: number
+          title: Score
+        section_path:
+          type: string
+          title: Section Path
+          default: ''
+        page_start:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Page Start
+        page_end:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Page End
+        source_locator:
+          type: string
+          title: Source Locator
+        channels:
+          items:
+            type: string
+          type: array
+          title: Channels
+        context:
+          items:
+            $ref: '#/components/schemas/DocumentContextChunk'
+          type: array
+          title: Context
+      type: object
+      required:
+      - document_asset_id
+      - chunk_id
+      - file_name
+      - text
+      - score
+      - source_locator
+      - channels
+      - context
+      title: DocumentSearchItem
+    DocumentSearchResponse:
+      properties:
+        query:
+          type: string
+          title: Query
+        items:
+          items:
+            $ref: '#/components/schemas/DocumentSearchItem'
+          type: array
+          title: Items
+      type: object
+      required:
+      - query
+      - items
+      title: DocumentSearchResponse
     EntityDetailAppearance:
       properties:
         id:
@@ -6525,6 +6794,24 @@ components:
       - attachments
       - created_at
       title: TurnSummary
+    UnifiedImportResponse:
+      properties:
+        routed_to:
+          type: string
+          enum:
+          - document
+          - media
+          title: Routed To
+        result:
+          anyOf:
+          - $ref: '#/components/schemas/DocumentImportResponse'
+          - $ref: '#/components/schemas/ImportResponse'
+          title: Result
+      type: object
+      required:
+      - routed_to
+      - result
+      title: UnifiedImportResponse
     ValidationError:
       properties:
         loc:

@@ -34,6 +34,7 @@ logs/
 
 # Local audio evaluation workspace and private architecture notes.
 /audio_eval/
+/document_eval/
 /docs/architecture/audio-pipeline-current.md
 /docs/architecture/audio-asr-model-comparison-and-storage-pipeline.md
 /docs/architecture/audio-understanding-quality-gate.md
