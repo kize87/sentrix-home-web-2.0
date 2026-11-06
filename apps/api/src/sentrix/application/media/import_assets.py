@@ -89,20 +89,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sentrix.application.media.extract_video_scenes import VideoSceneExtraction
+from sentrix.application.media.stage_timing import stage_span
 from sentrix.domain.identity.ports import FaceEnroller, PreparedFaces
-from sentrix.domain.media.models import (
-    Asset,
-    AssetStatus,
-    MediaType,
-    Observation,
-    normalize_captured_datetime,
-)
+from sentrix.domain.media.capture_time import CaptureTime
+from sentrix.domain.media.models import Asset, AssetStatus, MediaType, Observation
 from sentrix.domain.media.ports import (
     AssetObserver,
     AssetRepository,
     AudioMetadataReader,
     AudioProbe,
     AudioRepository,
+    CaptureTimeResolver,
     MediaStorage,
     MetadataReader,
     ObservationRepository,
@@ -244,6 +241,7 @@ class ImportAssets:
         observations: ObservationRepository,
         storage: MediaStorage,
         metadata: MetadataReader,
+        resolve_capture_time: CaptureTimeResolver | None = None,
         visual_indexer: AssetVisualIndexer | None = None,
         place_indexer: AssetPlaceIndex | None = None,
         observer: AssetObserver | None = None,
@@ -280,6 +278,7 @@ class ImportAssets:
         self._observations = observations
         self._storage = storage
         self._metadata = metadata
+        self._resolve_capture_time = resolve_capture_time
         self._video_metadata = video_metadata
         self._video_transcoder = video_transcoder
         self._video_repository = video_repository
@@ -390,12 +389,21 @@ class ImportAssets:
             else request.content_type
         )
 
+        source = "exif" if media_type is MediaType.IMAGE else "unknown"
+        if video_probe is not None and video_probe.metadata is not None:
+            source = video_probe.metadata.creation_source or "video_metadata"
+        if audio_probe is not None and audio_probe.metadata is not None:
+            source = audio_probe.metadata.creation_source or "audio_metadata"
+        provenance = CaptureTime(
+            captured_at.isoformat() if captured_at else "",
+            source if captured_at else "unknown",
+            status=("offset_only" if captured_at.utcoffset() is not None else "timezone_unknown")
+            if captured_at
+            else "unknown",
+        )
+        if self._resolve_capture_time is not None:
+            captured_at, provenance = self._resolve_capture_time(captured_at, gps, source)
         now = self._clock()
-        # ``clock`` 默认 ``datetime.now(UTC)``（aware），而 ``captured_at`` 的不变式是
-        # 「本地时间、无 tzinfo」。没有 EXIF/ffprobe 时兜底成导入时刻，也必须过同一层
-        # 归一化——否则事件时间窗比较会在 aware 减 naive 上抛 TypeError（见
-        # ``normalize_captured_datetime`` 的文档）。
-        captured_at = normalize_captured_datetime(captured_at or now)
         asset = Asset(
             id=asset_id,
             scope_id=request.scope_id,
@@ -407,6 +415,7 @@ class ImportAssets:
             status=AssetStatus.QUEUED if request.defer_processing else AssetStatus.PROCESSED,
             content_sha256=content_sha256,
             captured_at=captured_at,
+            capture_time=provenance,
             captured_location=gps,
             created_at=now,
             updated_at=now,
@@ -437,12 +446,17 @@ class ImportAssets:
         total_started = time.perf_counter()
         asset = staged.asset
         commit_started = time.perf_counter()
-        processed = self.commit_image(asset, prepared)
+        with stage_span("source_memory_commit", asset.id):
+            processed = self.commit_image(asset, prepared)
         memory_commit_seconds = time.perf_counter() - commit_started
         commit_finished = time.perf_counter()
         # 场景抽取排在图片流水线**之后**：它自己会再建一批资产与观察（关键帧），
         # 先跑会把派生物的数混进「这次导入」的结果里。
-        video_scenes = self._extract_video_scenes(asset)
+        if asset.media_type is MediaType.VIDEO:
+            with stage_span("video_total", asset.id):
+                video_scenes = self._extract_video_scenes(asset)
+        else:
+            video_scenes = self._extract_video_scenes(asset)
         if (
             staged.media_type is MediaType.VIDEO
             and video_scenes.timings
