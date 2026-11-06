@@ -51,6 +51,9 @@ from sentrix.infrastructure.persistence.repositories.search_terms import SqliteL
 from sentrix.infrastructure.persistence.repositories.structured import (
     SqliteStructuredQueryRepository,
 )
+from sentrix.infrastructure.persistence.repositories.text_vectors import (
+    SqliteTextVectorRepository,
+)
 from sentrix.infrastructure.persistence.repositories.vectors import SqliteVectorRepository
 from sentrix.infrastructure.persistence.repositories.video import SqliteVideoRepository
 
@@ -112,6 +115,7 @@ class StubPeople:
 def toolbox(migrations_ready_db, tmp_path):
     assets = SqliteAssetRepository(migrations_ready_db)
     vectors = SqliteVectorRepository(migrations_ready_db)
+    text_vectors = SqliteTextVectorRepository(migrations_ready_db)
     result_sets = SqliteResultSetRepository(migrations_ready_db)
     media = tmp_path / "media"
     media.mkdir()
@@ -161,7 +165,7 @@ def toolbox(migrations_ready_db, tmp_path):
                 index=SqliteLexicalIndex(migrations_ready_db, observations, assets=assets, places=places)
             ),
             metadata=RetrieveMetadata(assets=assets, places=places, aliases=EMPTY_ALIASES),
-            text=RetrieveTextAnn(embedder=ScriptedTextEmbedder(), vectors=vectors),
+            text=RetrieveTextAnn(embedder=ScriptedTextEmbedder(), vectors=text_vectors),
         ),
         assets=assets,
         result_sets=result_sets,

@@ -125,6 +125,7 @@ def _run_turn(container: Container) -> RunTurn:
             # `inspect_photo` 的两件（T123）：把问题问给图的那一层，与目标人物的裁剪件。
             photo_inspector=container.photo_inspector,
             person_crops=container.person_crop_renderer,
+            events=container.event_repository,
             # preview 的 ``place`` 取自这里（导入期 EXIF GPS 反解出来的行政地名），
             # 不是 ``observations.place``（VLM 的场景描述）——理由见 ``_place_label``。
             asset_places=container.asset_place_repository,
@@ -140,6 +141,9 @@ def _run_turn(container: Container) -> RunTurn:
         profile=replace(
             DEFAULT_PROFILE,
             wall_time_s=container.settings.agent_wall_time_s,
+            max_steps=container.settings.agent_max_steps,
+            max_tool_calls=container.settings.agent_max_tool_calls,
+            strict_model_step_budget=container.settings.vlm_exact_output_budget,
         ),
     )
 

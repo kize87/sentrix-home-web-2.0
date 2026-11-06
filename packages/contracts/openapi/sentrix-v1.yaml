@@ -5267,6 +5267,16 @@ components:
           - type: string
           - type: 'null'
           title: Audio Transcription Status
+        job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Job Id
+        job_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Job Status
       type: object
       required:
       - asset_id

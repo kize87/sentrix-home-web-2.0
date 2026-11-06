@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from sentrix.application.assistant.query_memory_facts import QueryMemoryFacts
-from sentrix.application.documents.search_documents import SearchDocuments, SearchDocumentsRequest
 from sentrix.application.retrieval.retrieve_evidence import EvidenceRequest, RetrieveEvidence
 from sentrix.application.retrieval.retrieve_graph import graph_direction, graph_intent
 from sentrix.domain.assistant.evidence_binding import fact_value_type
@@ -46,13 +45,14 @@ from sentrix.domain.assistant.result_set import PAGE_SIZE, ResultSet, ResultSetE
 from sentrix.domain.assistant.tools import MAX_DELIVERED_PHOTOS
 from sentrix.domain.identity.ports import FaceRepository, PersonCropRenderer
 from sentrix.domain.media.inspection import CERTAINTY_SUPPORTED
-from sentrix.domain.media.models import Observation
+from sentrix.domain.media.models import MediaType, Observation
 from sentrix.domain.media.ports import (
     AssetRepository,
     ObservationRepository,
     PhotoInspector,
     RecordedPhotoInspector,
 )
+from sentrix.domain.memories.ports import EventRepository
 from sentrix.domain.places.ports import AssetPlaceRepository
 from sentrix.domain.retrieval.fact_query import FactRejection
 
@@ -63,8 +63,6 @@ DEFAULT_INSPECT_QUESTION = "请描述这张照片"
 
 DEFAULT_SEARCH_LIMIT = 6
 MAX_SEARCH_LIMIT = 6
-_DOCUMENT_TEXT_LIMIT = 1800
-_DOCUMENT_CONTEXT_LIMIT = 1000
 
 # 复合摘要的三个上限，逐条取自 1.0 ``agent_runtime/tools.py:371-414`` 的
 # ``_observation_summary``（单段文字 120 字、整串 300 字、列表取前 8 项）。
@@ -173,14 +171,6 @@ def _clamp_limit(value: Any) -> int:
     return min(MAX_SEARCH_LIMIT, max(1, parsed))
 
 
-def _document_page_label(start: int | None, end: int | None) -> str:
-    if start is None:
-        return ""
-    if end is None or end == start:
-        return str(start)
-    return f"{start}-{end}"
-
-
 class AssistantToolbox:
     def __init__(
         self,
@@ -195,7 +185,7 @@ class AssistantToolbox:
         photo_inspector: PhotoInspector,
         person_crops: PersonCropRenderer,
         asset_places: AssetPlaceRepository | None = None,
-        documents: SearchDocuments | None = None,
+        events: EventRepository | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._assets = assets
@@ -205,6 +195,10 @@ class AssistantToolbox:
         # 照片的**行政地点**（导入期由 EXIF GPS 反解而来）。preview 的 ``place``
         # 必须取这一份而不是 ``observations.place``——理由见 ``_place_label``。
         self._asset_places = asset_places
+        # A video/keyframe result must expose its scene-aligned transcript to the agent.
+        # Retrieval can find the video from transcript text, but an asset-only preview
+        # would otherwise hide the event memory and send spoken-content questions to OCR.
+        self._events = events
         # ``query_photo_people`` 的两条读路径（T122）。两者都是**只读**，
         # 且都只被这一个工具用——不是通用能力。
         self._faces = faces
@@ -213,9 +207,6 @@ class AssistantToolbox:
         # 头肩裁剪件。裁剪走端口而不是在这里 import PIL——domain-purity 把 PIL 点名禁了。
         self._photo_inspector = photo_inspector
         self._crops = person_crops
-        # 文档有独立的解析、分块、FTS 与向量链路；这里只把其只读检索能力接进助手，
-        # 不复用照片 Observation / ResultSetEntry，避免两种模态的数据结构混在一起。
-        self._documents = documents
 
     def execute(
         self,
@@ -228,8 +219,6 @@ class AssistantToolbox:
     ) -> ToolOutcome:
         if name == "search_memories":
             return self._search(arguments, scope_id=scope_id, now=now)
-        if name == "search_documents":
-            return self._search_documents(arguments, scope_id=scope_id, now=now)
         if name == "get_result_page":
             return self._page(arguments, scope_id=scope_id)
         if name == "query_photo_people":
@@ -243,86 +232,6 @@ class AssistantToolbox:
         if name == "query_memory_facts":
             return self._facts(arguments, scope_id=scope_id, now=now)
         return _failure("unknown_tool", f"没有名为 {name} 的工具。")
-
-    # ---- search_documents --------------------------------------------------
-
-    def _search_documents(
-        self,
-        arguments: Mapping[str, Any],
-        *,
-        scope_id: str,
-        now: datetime,
-    ) -> ToolOutcome:
-        query = str(arguments.get("query") or "").strip()
-        if not query:
-            return _failure("empty_query", "query 不能为空，请填写要在文档中查找的问题或关键短语。")
-        if self._documents is None:
-            return _failure("document_search_unavailable", "文档检索当前没有配置。")
-
-        hits = self._documents.execute(
-            SearchDocumentsRequest(
-                text=query,
-                scope_id=scope_id,
-                limit=_clamp_limit(arguments.get("limit")),
-                context_radius=1,
-            )
-        )
-
-        # TaskState 通过 result_set_id 判断检索入口已经打开。文档不使用照片 handle，
-        # 因此保存一个空的结果集哨兵：它只服务回合状态和最终门禁，不承载文档正文。
-        result_set = ResultSet(
-            id=f"rs_{uuid.uuid4().hex[:12]}",
-            scope_id=scope_id,
-            query=query,
-            asset_ids=(),
-            created_at=now,
-        )
-        self._result_sets.add(result_set)
-
-        documents: list[dict[str, Any]] = []
-        for index, hit in enumerate(hits, 1):
-            page_label = _document_page_label(hit.page_start, hit.page_end)
-            neighbors = [
-                {
-                    "page": _document_page_label(chunk.page_start, chunk.page_end),
-                    "text": chunk.text[:_DOCUMENT_CONTEXT_LIMIT],
-                }
-                for chunk in hit.context
-                if chunk.id != hit.chunk_id and chunk.text.strip()
-            ]
-            documents.append(
-                {
-                    "reference": f"document_{index}",
-                    "file_name": hit.file_name,
-                    "page": page_label,
-                    "section": hit.section_path,
-                    "text": hit.text[:_DOCUMENT_TEXT_LIMIT],
-                    "context": neighbors,
-                }
-            )
-
-        return ToolOutcome(
-            observation={
-                "result_set_id": result_set.id,
-                "query": query,
-                "total": len(hits),
-                "has_more": False,
-                "asset_ids": [],
-                "document_asset_ids": [hit.document_asset_id for hit in hits],
-                "chunk_ids": [hit.chunk_id for hit in hits],
-                "source_locators": [hit.source_locator for hit in hits],
-            },
-            model_visible={
-                "query": query,
-                "total": len(hits),
-                "has_more": False,
-                "documents": documents,
-                "instruction": (
-                    "只根据这些文档原文回答；标注来源时写文件名和页码。"
-                    "若片段不足以确认答案，请明确说明证据不足。"
-                ),
-            },
-        )
 
     # ---- query_memory_facts -------------------------------------------------
 
@@ -401,7 +310,6 @@ class AssistantToolbox:
             asset_ids=tuple(hit.asset_id for hit in result.hits),
             created_at=now,
             evidence_classes={hit.asset_id: hit.evidence_class for hit in result.hits},
-            audio_evidence={hit.asset_id: hit.audio_context for hit in result.hits if hit.audio_context},
         )
         self._result_sets.add(result_set)
         channel_trace = [
@@ -606,18 +514,74 @@ class AssistantToolbox:
             # 此前只能靠逐张 ``query_photo_people`` 或 ``inspect_photo`` 去凑。
             "people_count": self._people_count(entry.asset_id),
             "evidence_summary": _observation_summary(latest),
-            # 音频锚点与其相邻语境直接进入模型可见 preview。视觉摘要和音频证据并列，
-            # 不预先让任一模态覆盖另一模态；is_anchor 让模型知道哪一句真正命中了查询。
-            "audio_evidence": [
-                {
-                    "start_ms": segment.start_ms,
-                    "end_ms": segment.end_ms,
-                    "text": segment.text,
-                    "is_anchor": segment.is_anchor,
-                    "speaker_label": segment.local_speaker_label,
-                }
-                for segment in entry.audio_evidence
-            ],
+            **self._speech_preview(asset),
+        }
+
+    def _speech_preview(self, asset: Any) -> Mapping[str, Any]:
+        """Expose transcript evidence only for a video or its timestamped keyframe.
+
+        Video previews include their scene transcript with scene bounds. A derived
+        keyframe includes only transcript segments overlapping its source timestamp,
+        keeping speech aligned to the frame instead of copying the whole video's audio.
+        """
+        if self._events is None or asset is None:
+            return {}
+        video_asset_id = asset.id if asset.media_type.value == "video" else asset.parent_asset_id
+        if not video_asset_id:
+            return {}
+        scenes = self._events.list_video_scenes(video_asset_id)
+        if not scenes:
+            return {}
+
+        frame_time = asset.source_timestamp_sec if asset.media_type.value != "video" else None
+        evidence: list[dict[str, Any]] = []
+        for scene in scenes:
+            if frame_time is not None and not (
+                (scene.source_start_sec or 0.0) <= frame_time <= (scene.source_end_sec or 0.0)
+            ):
+                continue
+            metadata = scene.source_metadata
+            segments = metadata.get("speech_segments", [])
+            if not isinstance(segments, list):
+                segments = []
+            for segment in segments:
+                if not isinstance(segment, dict):
+                    continue
+                try:
+                    start_sec = float(segment.get("start_sec", 0.0))
+                    end_sec = float(segment.get("end_sec", start_sec))
+                except (TypeError, ValueError):
+                    continue
+                if frame_time is not None and not start_sec <= frame_time <= end_sec:
+                    continue
+                text = str(segment.get("text") or "").strip()
+                if text:
+                    evidence.append(
+                        {
+                            "start_sec": start_sec,
+                            "end_sec": end_sec,
+                            "text": text[:1000],
+                            "speaker": str(segment.get("speaker") or ""),
+                        }
+                    )
+            if not segments:
+                transcript = str(metadata.get("speech_transcript") or "").strip()
+                if transcript:
+                    evidence.append(
+                        {
+                            "scene_start_sec": scene.source_start_sec,
+                            "scene_end_sec": scene.source_end_sec,
+                            "text": transcript[:1000],
+                        }
+                    )
+        if not evidence:
+            return {}
+        return {
+            "speech_evidence": evidence[:12],
+            "speech_evidence_note": (
+                "语音证据来自视频 ASR 转写；关键帧仅显示与该帧时间戳重叠的语音片段。"
+                "可直接用于回答说话内容，不要改用图片 OCR。"
+            ),
         }
 
     def _people_count(self, asset_id: str) -> int:
@@ -887,6 +851,25 @@ class AssistantToolbox:
             )
 
         asked = str(arguments.get("question") or "").strip() or DEFAULT_INSPECT_QUESTION
+        # Parent video/audio assets can appear beside image keyframes in a result set.
+        # They are not image payloads; never send their bytes to the photo inspector.
+        if asset.media_type is not MediaType.IMAGE:
+            return ToolOutcome(
+                observation={
+                    "failure_reason": "unsupported_media_type",
+                    "asset_id": asset_id,
+                    "media_kind": asset.media_type.value,
+                },
+                model_visible={
+                    "error": "unsupported_media_type",
+                    "message": (
+                        "inspect_photo 只接受图片，当前 handle 是视频或音频原件。"
+                        "请从检索结果选择 media_kind=image、source_kind=video_keyframe 的视频关键帧"
+                        "或普通照片复核；没有相关关键帧时请重新检索，不要把未查看的原片当作视觉证据。"
+                    ),
+                },
+                failure_reason="unsupported_media_type",
+            )
         identities = self._faces.list_photo_identities(asset_id)
         manifest = self._faces.list_face_manifest(asset_id)
         described = sum(

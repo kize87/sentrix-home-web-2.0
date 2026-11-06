@@ -9,11 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from sentrix.api.deps import get_container
 from sentrix.api.routes.media import to_summary
-from sentrix.api.schemas.search import AudioEvidenceExcerpt as AudioEvidenceExcerptSchema
 from sentrix.api.schemas.search import ChannelTrace, SearchHit, SearchResponse
 from sentrix.application.retrieval.evaluate_conditions import EvaluateConditions
-from sentrix.application.retrieval.expand_audio_context import ExpandAudioContext
-from sentrix.application.retrieval.retrieve_audio_segments import RetrieveAudioSegments
 from sentrix.application.retrieval.retrieve_entity import RetrieveEntity
 from sentrix.application.retrieval.retrieve_evidence import EvidenceRequest, RetrieveEvidence
 from sentrix.application.retrieval.retrieve_graph import RetrieveGraph
@@ -49,7 +46,7 @@ def build_retrieve_evidence(container: Container) -> RetrieveEvidence:
             vectors=container.vector_repository,
             index=container.vector_index,
         ),
-        text=RetrieveTextAnn(embedder=container.text_embedder, vectors=container.vector_repository),
+        text=RetrieveTextAnn(embedder=container.text_embedder, vectors=container.text_vector_repository),
         entity=RetrieveEntity(index=container.lexical_search, observations=container.observation_repository),
         lexical=RetrieveLexical(index=container.lexical_search),
         metadata=RetrieveMetadata(
@@ -66,10 +63,10 @@ def build_retrieve_evidence(container: Container) -> RetrieveEvidence:
             confirmed_people=_confirmed_people(container),
         ),
         graph=RetrieveGraph(graph=container.memory_graph),
-        audio_context=ExpandAudioContext(container.audio_transcription_repository),
-        audio_segments=RetrieveAudioSegments(
-            embedder=container.text_embedder, vectors=container.vector_repository
-        ),
+        # 重排只重排 RRF 后的头部；``container.reranker is None`` 时整段不执行。
+        reranker=container.reranker,
+        observations=container.observation_repository,
+        rerank_top_k=container.settings.rerank_top_k,
     )
 
 
@@ -171,18 +168,6 @@ def search_assets(
                 score=hit.score,
                 channels=dict(hit.channels),
                 raw_scores=dict(hit.raw_scores),
-                audio_start_ms=hit.audio_start_ms,
-                audio_end_ms=hit.audio_end_ms,
-                audio_context=[
-                    AudioEvidenceExcerptSchema(
-                        start_ms=segment.start_ms,
-                        end_ms=segment.end_ms,
-                        text=segment.text,
-                        is_anchor=segment.is_anchor,
-                        speaker_label=segment.local_speaker_label,
-                    )
-                    for segment in hit.audio_context
-                ],
             )
         )
 
@@ -205,19 +190,4 @@ def search_assets(
             for trace in result.channel_trace
         ],
         items=items,
-        direct_audio=[
-            {
-                "segment_id": item.segment_id,
-                "asset_id": item.asset_id,
-                "score": item.score,
-                "start_ms": item.start_ms,
-                "end_ms": item.end_ms,
-                "context": [
-                    {"start_ms": part.start_ms, "end_ms": part.end_ms, "text": part.text,
-                     "is_anchor": part.is_anchor, "speaker_label": part.local_speaker_label}
-                    for part in item.context
-                ],
-            }
-            for item in result.direct_audio
-        ],
     )
