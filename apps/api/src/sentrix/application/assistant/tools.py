@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from sentrix.application.assistant.query_memory_facts import QueryMemoryFacts
+from sentrix.application.media.speech_context import expand_frame_speech_context
 from sentrix.application.retrieval.retrieve_evidence import EvidenceRequest, RetrieveEvidence
 from sentrix.application.retrieval.retrieve_graph import graph_direction, graph_intent
 from sentrix.domain.assistant.evidence_binding import fact_value_type
@@ -544,6 +545,14 @@ class AssistantToolbox:
             segments = metadata.get("speech_segments", [])
             if not isinstance(segments, list):
                 segments = []
+            if frame_time is not None:
+                evidence.extend(
+                    expand_frame_speech_context(
+                        segments,
+                        frame_time_sec=float(frame_time),
+                    )
+                )
+                continue
             for segment in segments:
                 if not isinstance(segment, dict):
                     continue
@@ -562,6 +571,7 @@ class AssistantToolbox:
                             "end_sec": end_sec,
                             "text": text[:1000],
                             "speaker": str(segment.get("speaker") or ""),
+                            "is_anchor": True,
                         }
                     )
             if not segments:
@@ -579,7 +589,7 @@ class AssistantToolbox:
         return {
             "speech_evidence": evidence[:12],
             "speech_evidence_note": (
-                "语音证据来自视频 ASR 转写；关键帧仅显示与该帧时间戳重叠的语音片段。"
+                "语音证据来自视频 ASR 转写；关键帧显示时间重叠锚点及其连续相邻片段。"
                 "可直接用于回答说话内容，不要改用图片 OCR。"
             ),
         }
