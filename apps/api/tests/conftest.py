@@ -314,7 +314,6 @@ def isolated_app(settings, fake_embedding_startup):
         # 所以契约测试能走完整条「导入视频 → 场景成型 → 关键帧落库」的链。
         video_keyframe_extractor=FakeVideoKeyframeExtractor(),
         video_scene_planner=None,
-        audio_transcriber=None,
         cross_modal_embedder=None,
     )
     return app

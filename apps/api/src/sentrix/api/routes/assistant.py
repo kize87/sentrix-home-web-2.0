@@ -133,7 +133,7 @@ def _run_turn(container: Container) -> RunTurn:
                 documents=container.document_repository,
                 assets=container.asset_repository,
                 embedder=container.text_embedder,
-                vectors=container.vector_repository,
+                vectors=container.text_vector_repository,
             ),
         ),
         # 墙钟是部署事实：Mac/CPU 上 4 并发时一次 inspect 就可能 30-60s，

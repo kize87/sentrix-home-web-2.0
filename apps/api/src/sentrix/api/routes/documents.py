@@ -25,7 +25,7 @@ def build_import_document(container: Container) -> ImportDocument:
         documents=container.document_repository,
         parser=container.document_parser,
         embedder=container.text_embedder,
-        vectors=container.vector_repository,
+        vectors=container.text_vector_repository,
     )
 
 
@@ -34,7 +34,7 @@ def build_search_documents(container: Container) -> SearchDocuments:
         documents=container.document_repository,
         assets=container.asset_repository,
         embedder=container.text_embedder,
-        vectors=container.vector_repository,
+        vectors=container.text_vector_repository,
     )
 
 
